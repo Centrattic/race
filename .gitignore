@@ -1,0 +1,12 @@
+*.bmp
+*.png
+*.csv
+*.tar
+*.txt
+*.sh
+*.h5
+*.json
+*.pkl
+*.yaml
+*.pth
+*.pyc
