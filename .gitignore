@@ -10,3 +10,4 @@
 *.yaml
 *.pth
 *.pyc
+*.hdf5
