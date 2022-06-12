@@ -11,3 +11,4 @@
 *.pth
 *.pyc
 *.hdf5
+*.pt
