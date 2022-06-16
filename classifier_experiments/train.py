@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, models, transforms
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
 
 from pathlib import Path
 import tensorflow as tf
@@ -26,9 +27,6 @@ from tqdm import tqdm
 
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
 
-
-# model definition
-
 class PretrainedModel(nn.Module):
     def __init__(self, output_features):
         super().__init__()
@@ -39,10 +37,7 @@ class PretrainedModel(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-
     
-# preprocessing
-
 def shadow_regions(img, skeleton, shadow, radius, region, image_size = (224, 224)):
     
     img = np.array(img)
@@ -82,26 +77,29 @@ def shadow_regions(img, skeleton, shadow, radius, region, image_size = (224, 224
 
     return img
 
+def ds_roc_auc(net, ds, y=None):
+    # ds yields (X, y)
+    y_true = [y for _, y in ds]
+    y_pred = net.predict(ds)
+    return roc_auc_score(y_true, y_pred)
 
-# train code
-
-def train(data_dir, radius, region, skeleton=False, shadow = False, num_classes=2, batch_size=1, num_epochs=10, lr=0.001):
-    device = torch.device('cuda:1' if torch.cuda.is_available() else "cpu")
+def train(data_dir, radius, region, skeleton=False, shadow = False, num_classes=2, batch_size=64, num_epochs=50, lr=0.001):
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # 
     if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
     if skeleton is True: # Experiment #2: skeleton true, shadow true
         shadow = True
-        f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized.pt'
-        f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized.json'
-        csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_skeletonized.csv'
+        f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.pt'
+        f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.json'
+        csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.csv'
     elif shadow is True: # Experiment #3: skeleton false, shadow true
-        f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}.pt'
-        f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}.json'
-        csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}.csv'
+        f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.pt'
+        f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.json'
+        csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_epoch{num_epochs}.csv'
     else: # Original training: skeleton false, shadow false
-        f_params = f'./outputs/checkpoints/model_original.pt'
-        f_history = f'./outputs/histories/model_original.json'
-        csv_name = f'./outputs/probabilities/original.csv'
+        f_params = f'./outputs/checkpoints/model_original_epoch{num_epochs}.pt'
+        f_history = f'./outputs/histories/model_original_epoch{num_epochs}.json'
+        csv_name = f'./outputs/probabilities/original_epoch{num_epochs}.csv'
         
     train_transforms = transforms.Compose([transforms.Lambda(lambda img: shadow_regions(img, skeleton,
                                                                                 shadow, radius,
@@ -165,14 +163,14 @@ def train(data_dir, radius, region, skeleton=False, shadow = False, num_classes=
 
     # accuracy on train/validation?
     
-    train_acc = EpochScoring(scoring='accuracy',
+    train_auc = EpochScoring(scoring=ds_roc_auc, # changing to this instead of accuracy, we'll see how it goes
                              on_train=True,
-                             name='train_acc',
+                             name='train_auc',
                              lower_is_better=False)
 
     early_stopping = EarlyStopping()
 
-    callbacks = [checkpoint, train_acc, early_stopping]
+    callbacks = [checkpoint, train_auc, early_stopping]
 
     net = NeuralNetClassifier(PretrainedModel,
                               criterion=nn.CrossEntropyLoss,
@@ -194,13 +192,11 @@ def train(data_dir, radius, region, skeleton=False, shadow = False, num_classes=
 
     img_locs = [loc for loc, _ in test_dataset.samples]
     test_probs = net.predict_proba(test_dataset)
-    test_probs = [prob[0] for prob in test_probs]
+    test_probs = [prob[0] for prob in test_probs] # probability of being black
     data = {'img_loc' : img_locs, 'probability' : test_probs}
     pd.DataFrame(data=data).to_csv(csv_name, index=False)
 
     
-# running the train (no memory error pls)
-
 if __name__ == '__main__':
     if not os.path.isdir(os.path.join('outputs', 'probabilities')):
         os.makedirs(os.path.join('outputs', 'probabilities'))
@@ -218,3 +214,9 @@ if __name__ == '__main__':
     train(data_dir, 45, 'dark_background',skeleton=True, shadow = True)
     train(data_dir, 90, 'dark_center',skeleton=True, shadow = True)
     train(data_dir, 90, 'dark_background',skeleton=True, shadow = True)
+    
+    # training 4 no skeleton + shadow models for experiment #2
+    train(data_dir, 45, 'dark_center',skeleton=False, shadow = True)
+    train(data_dir, 45, 'dark_background',skeleton=False, shadow = True)
+    train(data_dir, 90, 'dark_center',skeleton=False, shadow = True)
+    train(data_dir, 90, 'dark_background',skeleton=False, shadow = True)
