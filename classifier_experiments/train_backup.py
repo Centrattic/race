@@ -43,40 +43,47 @@ class PretrainedModel(nn.Module):
         return self.model(x)
     
 # preprocessing
+def checksum(optic_csv_path):
+    
+    # Turns out that around 31 of the images are actual duplicates! I looked at 10 and saw that they were. 
+    # Checksum is getting the best of it, then.
+    
+    checksum_arr = []
+    id_arr = []
 
-def determine_image_center(img, img_size, optic_csv_path): # using optic disk
+    # optic_csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
+    data_compare_path = "/users/riya/race/dataset/segmentations/"
+
+    QA_csv = pd.read_csv(optic_csv_path)
+
+    QA_csv.columns.values[0] = "img_id"
+    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
+    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
+
+    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
+
+    for i in tqdm(QA_csv['img_id']):
+        img_compare = np.array(Image.open(data_compare_path + str(i) + '.bmp'))
+        all_sum = np.concatenate(img_compare).sum()
+        col_sum = img_compare[:,100:240].sum()
+        
+        checksum_arr.append(all_sum + col_sum)
+        id_arr.append(i)
+    
+    checksum_dict = {id_arr[i]: checksum_arr[i] for i in range(len(id_arr))}
+    
+    return QA_csv, checksum_dict
+
+def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic disk
+    
+    id_og = '' # original id of image, for comparison
     
     img_og = np.array(img) # our original image
     img_og = img_og[:,:,0]
     
-    id_og = '' # original id of image, for comparison
-
-    data_compare_path = "/users/riya/race/dataset/segmentations/"
+    checksum_og = np.concatenate(img_og).sum() + img_og[:,100:240].sum()
     
-    # csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv" # could load in.
-    QA_csv = pd.read_csv(optic_csv_path)
-    
-    QA_csv.columns.values[0] = "img_id"
-    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
-    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
-    
-    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
-    
-    for i in tqdm(QA_csv['img_id']):
-        img_compare = Image.open(data_compare_path + str(i) + '.bmp') # compare image
-        img_compare = np.array(img_compare)
-        # img_compare = np.repeat(img_compare[:, :, np.newaxis], 3, axis=2).reshape((480,640,3))
-        # img_compare.resize()
-        # channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((1,256,256,3))
-
-        subtract_img = img_compare - img_og
-
-        is_all_zero = np.all((subtract_img == 0))
-
-
-        if is_all_zero == True:
-            id_og = i # img id, NOT str format
-            break
+    id_og = list(checksum_dict.keys())[list(checksum_dict.values()).index(checksum_og)] # finding id for which checksum_og matches
     
     # all images are of size 480 x 480
     
@@ -126,7 +133,7 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
         
         elif shadow_ring is not True:
             # developing mask that darkens center portion
-            center_mask = np.full(image_size, 255, dtype=np.uint8) 
+            center_mask = np.full(image_size, 255, dtype=np.uint8)
             # radius i changes, center, color, fill is the same
             cv2.circle(center_mask, disk_center, radius, (0, 0, 0), -1) # disk_center received from optic disk segmenter, tuple
 
@@ -150,7 +157,6 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
 
     return img
 
-
 # train code 
 
 def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = False, shadow_ring = False,
@@ -160,15 +166,19 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
     if skeleton is True: # Experiment #2: skeleton true, shadow true
-        shadow = True
-        if shadow_ring is True:
-            f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.pt'
-            f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.json'
-            csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.csv'
-        elif shadow_ring is False:
-            f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.pt'
-            f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.json'
-            csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.csv'
+        if shadow is True:
+            if shadow_ring is True:
+                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.csv'
+            elif shadow_ring is False:
+                f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.csv'
+        elif shadow is False:
+            f_params = f'./outputs/checkpoints/model_skeletonized_epoch{num_epochs}.pt'
+            f_history = f'./outputs/histories/model_skeletonized_epoch{num_epochs}.json'
+            csv_name = f'./outputs/probabilities/skeletonized_epoch{num_epochs}.csv'
         
     elif shadow is True: # Experiment #3: skeleton false, shadow true
         if shadow_ring is True:
@@ -187,9 +197,10 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     # fix these transforms w/ new optic disk
     
     optic_disk_csv = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
+    QA_csv, checksum_dict = checksum(optic_disk_csv)    
     
     train_transforms = transforms.Compose([transforms.Lambda
-                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, optic_disk_csv), 
+                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), 
                                                                   shadow, radius, shadow_ring, ring_radiuses, region)), # image size pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
@@ -200,7 +211,7 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
     test_transforms = transforms.Compose([transforms.Lambda
-                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, optic_disk_csv), 
+                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), 
                                                                   shadow, radius, shadow_ring, ring_radiuses, region)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
@@ -287,7 +298,7 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     data = {'img_loc' : img_locs, 'probability' : test_probs}
     pd.DataFrame(data=data).to_csv(csv_name, index=False)
     
-    print ("Code Done.")
+    print ("The code is done.")
 
     
 # run train
@@ -302,4 +313,11 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    train(data_dir, 0, [0], 'none')
+    # original model
+    train(data_dir, 0, [0,0], 'none')
+    
+    # skeletonized control
+    train(data_dir, 0, [0,0], 'none', skeleton =True, shadow = False, shadow_ring = False)
+    
+    # training 6 skeleton & shadow (no ring) models for experiment #2
+    train(data_dir, 45, [0,0] 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
