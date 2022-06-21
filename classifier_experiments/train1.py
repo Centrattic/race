@@ -93,7 +93,7 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     x_og = img_row['x'].reset_index(drop=True)[0]
     
     x_pos = (80 + y_og) * img_size[1]/640 # x size is 640, cropped that way
-    y_pos = (480 - x_og)* img_size[0]/480 # y size is 480 (also, height is first in img size tuple, so the 0)
+    y_pos = (x_og)* img_size[0]/480 # y size is 480 (also, height is first in img size tuple, so the 0)
     
     disk_center = (int(x_pos), int(y_pos)) # for (224, 224) image that will be created soon
     
@@ -243,6 +243,9 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     print(f'Data Directory: {data_dir}')
     print(f'Skeletonize: {skeleton}')
     print(f'Shadow: {shadow}')
+    print(f'Shadow_Ring: {shadow_ring}')
+    print(f'Inner Radius: {ring_radiuses[0]}')
+    print(f'Outer Radius: {ring_radiuses[1]}')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -313,11 +316,13 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    # training 6 skeleton & shadow (no ring) models for experiment #2
-
-    train(data_dir, 45, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
+    # experiment 4 part 2
     
-    train(data_dir, 60, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
-    train(data_dir, 60, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
+    train(data_dir, 0, [0, 15], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
+    train(data_dir, 0, [0, 15], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
     
-    train(data_dir, 90, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
+    train(data_dir, 0, [15, 30], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
+    train(data_dir, 0, [15, 30], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
+    
+    train(data_dir, 0, [30, 45], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
+    train(data_dir, 0, [30, 45], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
