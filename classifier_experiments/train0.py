@@ -243,6 +243,7 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     print(f'Data Directory: {data_dir}')
     print(f'Skeletonize: {skeleton}')
     print(f'Shadow: {shadow}')
+    print(f'Shadow Radius: {radius}')
     print(f'Shadow_Ring: {shadow_ring}')
     print(f'Inner Radius: {ring_radiuses[0]}')
     print(f'Outer Radius: {ring_radiuses[1]}')
@@ -316,13 +317,10 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    # experiment 4 part 1
+    # experiment 5 part 1
     
-    train(data_dir, 0, [0, 30], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
-    train(data_dir, 0, [0, 30], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
-    
-    train(data_dir, 0, [30, 60], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
-    train(data_dir, 0, [30, 60], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
-    
-    train(data_dir, 0, [60, 90], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
-    train(data_dir, 0, [60, 90], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
+    train(data_dir, 75, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
+    train(data_dir, 75, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
+
+    train(data_dir, 105, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False) 
+    train(data_dir, 105, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
