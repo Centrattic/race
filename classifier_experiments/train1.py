@@ -361,13 +361,22 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    # experiment 7 part 1
+    # experiment 7 part 2
         
-    train(data_dir, [0, 60], 'skeleton_background', '#7(half_skeletonize)')
-    train(data_dir, [0, 60], 'skeleton_center', '#7(half_skeletonize)')
+    train(data_dir, [0, 45], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 45], 'skeleton_center', '#7(half_skeletonize)')
     
-    train(data_dir, [0, 30], 'skeleton_background', '#7(half_skeletonize)')
-    train(data_dir, [0, 30], 'skeleton_center', '#7(half_skeletonize)')
+    train(data_dir, [0, 75], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 75], 'skeleton_center', '#7(half_skeletonize)')
     
-    train(data_dir, [0, 15], 'skeleton_background', '#7(half_skeletonize)')
-    train(data_dir, [0, 15], 'skeleton_center', '#7(half_skeletonize)')
+    train(data_dir, [0, 90], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 90], 'skeleton_center', '#7(half_skeletonize)')
+    
+    train(data_dir, [0, 105], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 105], 'skeleton_center', '#7(half_skeletonize)')
+    
+    train(data_dir, [0, 120], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 120], 'skeleton_center', '#7(half_skeletonize)')
+    
+    
+    # from skeletonized original having lower AUC than non-skeletonized original, tells us region of non-skeletonized that's useful may be larger! so try 75 and 90 skeletonized region as well, right after this!!
