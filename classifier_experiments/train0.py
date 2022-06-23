@@ -99,8 +99,32 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     
     return disk_center
 
+def multiple_ring_mask(disk_center, num_rings, ring_radiuses,
+                       image_size = (224, 224)):
+    
+    # ex. ring_radiuses: [[0, 15], [75, 90]]
+    
+    center_mask = np.full(image_size, 0, dtype=np.uint8) 
+
+    for i in range(num_rings):
+        ring_mask = np.full(image_size, 0, dtype=np.uint8)  
+        # for each of the radiuses given dark around the outer circle
+        cv2.circle(ring_mask, disk_center, ring_radiuses[i][1], (255, 255, 255), -1) 
+        cv2.circle(ring_mask, disk_center, ring_radiuses[i][0], (0,0, 0), -1) # the white for that region
+    
+        center_mask = center_mask + ring_mask 
+
+    # idk why exactly this is needed...? 
+    # probably related to the fact that adding the original center_mask does NOT make sense, but appears to work
+    center_mask = cv2.bitwise_not(center_mask) 
+    
+    # back_mask = cv2.bitwise_not(center_mask)
+    # return cv2.bitwise_or(img, img, mask=back_mask)
+    
+    return center_mask
+
 def shadow_regions(img, skeleton, disk_center, shadow, radius, 
-                   shadow_ring, ring_radiuses, region, 
+                   shadow_ring, num_rings, ring_radiuses, region, 
                    image_size = (224, 224)):
     
     img = np.array(img)
@@ -109,8 +133,6 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
     # defining channel which will be duplicated late (in case it's not already with Image Folder??)
     channel = img[:,:,0]
     
-    # disk_center is WEEEIRD, how to get working??
-
     if skeleton is True:
         # can binarize all 3 channels, but will go 1 at a time
         channel[channel > 0] = 255       
@@ -123,13 +145,20 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
         
         if shadow_ring is True:
             # ring_radiuses is [inner_radius, outer_radius]
+            
+            # for cases of multiple rings, we're just going to pop over to another function lol. 
+            # ring_radiuses will be array of arrays.
+            if num_rings > 1: 
+                center_mask = multiple_ring_mask(disk_center, num_rings, ring_radiuses,
+                                                image_size = (224, 224))
         
-            # developing mask that darkens ring portion
-            center_mask = np.full(image_size, 255, dtype=np.uint8) 
-            # radius i changes, center, color, fill is the same
-            cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
-            # adding circle to darken inside region
-            cv2.circle(center_mask, disk_center, ring_radiuses[0], (255,255, 255), -1)
+            elif num_rings <= 1: # 1 ring only or no ring, only 1 ring really applies here
+                # developing mask that darkens ring portion
+                center_mask = np.full(image_size, 255, dtype=np.uint8) 
+                # radius i changes, center, color, fill is the same
+                cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
+                # adding circle to darken inside region
+                cv2.circle(center_mask, disk_center, ring_radiuses[0], (255,255, 255), -1)
         
         elif shadow_ring is not True:
             # developing mask that darkens center portion
@@ -142,7 +171,7 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
 
         if (region == 'dark_center'): # could be for ring or not for ring
             modified_img2 = cv2.bitwise_or(modified_img, modified_img, mask=center_mask)
-
+            
         if (region == 'dark_background'):
             modified_img2 = cv2.bitwise_or(modified_img, modified_img, mask=back_mask)
             
@@ -157,20 +186,25 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
 
     return img
 
-# train code 
+# train code, fix with new addition.
 
-def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = False, shadow_ring = False,
+def train(data_dir, radius, num_rings, ring_radiuses, region, skeleton=False, shadow = False, shadow_ring = False,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
     if device == 'cuda:0': # using all available gpus
         torch.cuda.empty_cache()
     if skeleton is True: # Experiment #2: skeleton true, shadow true
         if shadow is True:
-            if shadow_ring is True:
-                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.pt'
-                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.json'
-                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.csv'
+            if shadow_ring is True:  
+                if num_rings > 1: # accounting only for num_rings = 2 (or radiuses only up to 2 are included)
+                    f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.pt'
+                    f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.json'
+                    csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.csv'
+                elif num_rings <= 1:
+                    f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.pt'
+                    f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.json'
+                    csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.csv'
             elif shadow_ring is False:
                 f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.pt'
                 f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.json'
@@ -180,11 +214,16 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
             f_history = f'./outputs/histories/model_skeletonized_epoch{num_epochs}.json'
             csv_name = f'./outputs/probabilities/skeletonized_epoch{num_epochs}.csv'
         
-    elif shadow is True: # Experiment #3: skeleton false, shadow true
+    elif shadow is True: # Experiments w/ skeleton false, shadow true
         if shadow_ring is True:
-            f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.pt'
-            f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.json'
-            csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.csv'
+            if num_rings > 1: # accounting only for num_rings = 2 (radiuses only up to 2 are included)
+                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.csv'
+            elif num_rings <= 1:
+                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.csv'
         elif shadow_ring is False:
             f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.pt'
             f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.json'
@@ -194,14 +233,12 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
         f_history = f'./outputs/histories/model_original_epoch{num_epochs}.json'
         csv_name = f'./outputs/probabilities/original_epoch{num_epochs}.csv'
         
-    # fix these transforms w/ new optic disk
+    # fix these transforms w/ new optic disk. Done!
     
     optic_disk_csv = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
     QA_csv, checksum_dict = checksum(optic_disk_csv)    
     
-    train_transforms = transforms.Compose([transforms.Lambda
-                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), 
-                                                                  shadow, radius, shadow_ring, ring_radiuses, region)), # image size pre-defined
+    train_transforms = transforms.Compose([transforms.Lambda(lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), shadow, radius, shadow_ring, num_rings, ring_radiuses, region)), # image size pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
                                            transforms.RandomVerticalFlip(),
@@ -210,9 +247,7 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda
-                                      (lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), 
-                                                                  shadow, radius, shadow_ring, ring_radiuses, region)),
+    test_transforms = transforms.Compose([transforms.Lambda(lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), shadow, radius, shadow_ring, num_rings, ring_radiuses, region)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
@@ -245,8 +280,9 @@ def train(data_dir, radius, ring_radiuses, region, skeleton=False, shadow = Fals
     print(f'Shadow: {shadow}')
     print(f'Shadow Radius: {radius}')
     print(f'Shadow_Ring: {shadow_ring}')
-    print(f'Inner Radius: {ring_radiuses[0]}')
-    print(f'Outer Radius: {ring_radiuses[1]}')
+    print(f'Number of Rings: {num_rings}')
+    print(f'Inner Radius/Ring: {ring_radiuses[0]}')
+    print(f'Outer Radius/Ring: {ring_radiuses[1]}')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -317,10 +353,11 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    # experiment 5 part 1
+    # experiment 6 part 1
     
-    train(data_dir, 75, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
-    train(data_dir, 75, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
+    train(data_dir, 0, 2, [[0,15],[75,90]], 'dark_center',skeleton=False, shadow = True, shadow_ring = True)
+    train(data_dir, 0, 2, [[0,15],[75,90]], 'dark_background',skeleton=False, shadow = True, shadow_ring = True)
 
-    train(data_dir, 105, [0,0], 'dark_center',skeleton=True, shadow = True, shadow_ring = False) 
-    train(data_dir, 105, [0,0], 'dark_background',skeleton=True, shadow = True, shadow_ring = False)
+    train(data_dir, 0, 2, [[0,30],[60,90]], 'dark_center',skeleton=False, shadow = True, shadow_ring = True) 
+    train(data_dir, 0, 2, [[0,30],[60,90]], 'dark_background',skeleton=False, shadow = True, shadow_ring = True) 
+
