@@ -186,59 +186,75 @@ def shadow_regions(img, skeleton, disk_center, shadow, radius,
 
     return img
 
-# train code, fix with new addition.
+def half_skeletonize(img, disk_center, skeleton_radiuses, region,
+                    image_size = (224, 224)): 
+    # skeletonize inside these radiuses.
+    # let region be skeletonized center or skeletonized outside
+    
+    # Ideas: 0 - 60 no skeletonize, 60 - 120 skeletonize
+    # 0 - 45 no skeletonize, 45 and on skeletonize
+    
+    img = np.array(img)
+    img = cv2.resize(img, image_size)
+    
+    # defining channel which will be duplicated late (in case it's not already with Image Folder??)
+    channel = img[:,:,0]
+    
+    # created duplicate image to skeletonize
+    skeleton_channel = np.copy(channel)
+    # thresholding can be done with this line: skeleton_channel[skeleton_channel < 20] = 0       
 
-def train(data_dir, radius, num_rings, ring_radiuses, region, skeleton=False, shadow = False, shadow_ring = False,
+    skeleton_channel[skeleton_channel > 0] = 255       
+    skeleton_channel = skeletonize(skeleton_channel, method='lee')
+    
+    # create masks to shadow channel & skeleton_channel
+    center_mask = np.full(image_size, 255, dtype=np.uint8)
+    # large black circle on outside
+    cv2.circle(center_mask, disk_center, skeleton_radiuses[1], (0, 0, 0), -1)
+    # smaller white circle on inside
+    cv2.circle(center_mask, disk_center, skeleton_radiuses[0], (255, 255, 255), -1)
+    
+    back_mask = cv2.bitwise_not(center_mask)
+    
+    if (region == 'skeleton_center'): # could be for ring or not for ring
+        channel = cv2.bitwise_or(channel, channel, mask=center_mask)
+        skeleton_channel = cv2.bitwise_or(skeleton_channel, skeleton_channel, mask=back_mask)
+
+    if (region == 'skeleton_background'):
+        # masking the center region
+        channel = cv2.bitwise_or(channel, channel, mask=back_mask)
+        skeleton_channel = cv2.bitwise_or(skeleton_channel, skeleton_channel, mask=center_mask)
+    
+    final_channel = channel + skeleton_channel
+    
+    img[:,:,0] = final_channel
+    img[:,:,1] = final_channel
+    img[:,:,2] = final_channel
+    
+    img = Image.fromarray(img)
+
+    return img
+
+# train code, modify for half-skeletonize with new addition.
+
+def train(data_dir, skeleton_radiuses, region, experiment_name,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
-    if device == 'cuda:2': # using all available gpus
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
+    if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
-    if skeleton is True: # Experiment #2: skeleton true, shadow true
-        if shadow is True:
-            if shadow_ring is True:  
-                if num_rings > 1: # accounting only for num_rings = 2 (or radiuses only up to 2 are included)
-                    f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.pt'
-                    f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.json'
-                    csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_skeletonized_epoch{num_epochs}.csv'
-                elif num_rings <= 1:
-                    f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.pt'
-                    f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.json'
-                    csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_skeletonized_epoch{num_epochs}.csv'
-            elif shadow_ring is False:
-                f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.pt'
-                f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.json'
-                csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_skeletonized_epoch{num_epochs}.csv'
-        elif shadow is False:
-            f_params = f'./outputs/checkpoints/model_skeletonized_epoch{num_epochs}.pt'
-            f_history = f'./outputs/histories/model_skeletonized_epoch{num_epochs}.json'
-            csv_name = f'./outputs/probabilities/skeletonized_epoch{num_epochs}.csv'
         
-    elif shadow is True: # Experiments w/ skeleton false, shadow true
-        if shadow_ring is True:
-            if num_rings > 1: # accounting only for num_rings = 2 (radiuses only up to 2 are included)
-                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.pt'
-                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.json'
-                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0][0]}_{ring_radiuses[0][1]}_{ring_radiuses[1][0]}_{ring_radiuses[1][1]}_epoch{num_epochs}.csv'
-            elif num_rings <= 1:
-                f_params = f'./outputs/checkpoints/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.pt'
-                f_history = f'./outputs/histories/model_shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.json'
-                csv_name = f'./outputs/probabilities/shadow_rings_{region}_{ring_radiuses[0]}_{ring_radiuses[1]}_epoch{num_epochs}.csv'
-        elif shadow_ring is False:
-            f_params = f'./outputs/checkpoints/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.pt'
-            f_history = f'./outputs/histories/model_shadow_regions_{region}_{radius}_epoch{num_epochs}.json'
-            csv_name = f'./outputs/probabilities/shadow_regions_{region}_{radius}_epoch{num_epochs}.csv'
-    else: # Original training: skeleton false, shadow false
-        f_params = f'./outputs/checkpoints/model_original_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/model_original_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/original_epoch{num_epochs}.csv'
+    # skeleton_radiuses gives region within which to skeletonize    
+    f_params = f'./outputs/checkpoints/{experiment_name}/model_half_skeletonize_{region}_{skeleton_radiuses[0]}_{skeleton_radiuses[1]}_epoch{num_epochs}.pt'
+    f_history = f'./outputs/histories/{experiment_name}/model_half_skeletonize_{region}_{skeleton_radiuses[0]}_{skeleton_radiuses[1]}_epoch{num_epochs}.json'
+    csv_name = f'./outputs/probabilities/{experiment_name}/half_skeletonize_{region}_{skeleton_radiuses[0]}_{skeleton_radiuses[1]}_epoch{num_epochs}.csv'
         
     # fix these transforms w/ new optic disk. Done!
     
     optic_disk_csv = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
     QA_csv, checksum_dict = checksum(optic_disk_csv)    
     
-    train_transforms = transforms.Compose([transforms.Lambda(lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), shadow, radius, shadow_ring, num_rings, ring_radiuses, region)), # image size pre-defined
+    train_transforms = transforms.Compose([transforms.Lambda(lambda img: half_skeletonize(img, determine_image_center(img, image_size, QA_csv, checksum_dict), skeleton_radiuses, region)), # image size pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
                                            transforms.RandomVerticalFlip(),
@@ -247,7 +263,7 @@ def train(data_dir, radius, num_rings, ring_radiuses, region, skeleton=False, sh
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda(lambda img: shadow_regions(img, skeleton, determine_image_center(img, image_size, QA_csv, checksum_dict), shadow, radius, shadow_ring, num_rings, ring_radiuses, region)),
+    test_transforms = transforms.Compose([transforms.Lambda(lambda img: half_skeletonize(img, determine_image_center(img, image_size, QA_csv, checksum_dict), skeleton_radiuses, region)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
@@ -276,13 +292,7 @@ def train(data_dir, radius, num_rings, ring_radiuses, region, skeleton=False, sh
 
     print()
     print(f'Data Directory: {data_dir}')
-    print(f'Skeletonize: {skeleton}')
-    print(f'Shadow: {shadow}')
-    print(f'Shadow Radius: {radius}')
-    print(f'Shadow_Ring: {shadow_ring}')
-    print(f'Number of Rings: {num_rings}')
-    print(f'Inner Radius/Ring: {ring_radiuses[0]}')
-    print(f'Outer Radius/Ring: {ring_radiuses[1]}')
+    print(f'Radiuses of Skeletonization: {skeleton_radiuses}')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -353,11 +363,22 @@ if __name__ == '__main__':
 
     data_dir = os.path.join('dataset')
 
-    # experiment 6 part 1
+    # experiment 7 part 2
+        
+    train(data_dir, [0, 45], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 45], 'skeleton_center', '#7(half_skeletonize)')
     
-    train(data_dir, 0, 2, [[0,15],[75,90]], 'dark_center',skeleton=True, shadow = True, shadow_ring = True)
-    train(data_dir, 0, 2, [[0,15],[75,90]], 'dark_background',skeleton=True, shadow = True, shadow_ring = True)
-
-    train(data_dir, 0, 2, [[0,30],[60,90]], 'dark_center',skeleton=True, shadow = True, shadow_ring = True) 
-    train(data_dir, 0, 2, [[0,30],[60,90]], 'dark_background',skeleton=True, shadow = True, shadow_ring = True) 
-
+    train(data_dir, [0, 75], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 75], 'skeleton_center', '#7(half_skeletonize)')
+    
+    train(data_dir, [0, 90], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 90], 'skeleton_center', '#7(half_skeletonize)')
+    
+    train(data_dir, [0, 105], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 105], 'skeleton_center', '#7(half_skeletonize)')
+    
+    train(data_dir, [0, 120], 'skeleton_background', '#7(half_skeletonize)')
+    train(data_dir, [0, 120], 'skeleton_center', '#7(half_skeletonize)')
+    
+    
+    # from skeletonized original having lower AUC than non-skeletonized original, tells us region of non-skeletonized that's useful may be larger! so try 75 and 90 skeletonized region as well, right after this!!
