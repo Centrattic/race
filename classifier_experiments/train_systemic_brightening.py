@@ -25,6 +25,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
+from utils import systemic_brightening
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
@@ -42,101 +43,35 @@ class PretrainedModel(nn.Module):
     def forward(self, x):
         return self.model(x)
     
-# preprocessing
-
-def process_skeletonize(img, skeleton, 
-                        image_size = (224, 224)):
-    
-    img = np.array(img)
-    img = cv2.resize(img, image_size)
-    
-    # defining channel which will be duplicated late (in case it's not already with Image Folder??)
-    channel = img[:,:,0]
-    
-    if skeleton is True:
-        # thresholding (removing these pixels) can be done with this line
-        # skeleton_channel[skeleton_channel < 20] = 0   
-        channel[channel > 0] = 255       
-        modified_img = skeletonize(channel, method='lee')
-    
-    elif skeleton is not True:
-        modified_img = channel
-    
-    return img, modified_img
-
-def shadow_threshold(c, operation, none_thresh, increment):
-    if (c <= none_thresh): # just to write it explicitly
-        c = c
-    else:
-        if (operation == 'add'):
-            summed = c + increment
-            if (summed > 255):
-                summed = 255
-            c = summed
-        if (operation == 'subtract'):
-            difference = c - increment
-            if (difference < 0):
-                difference = 0
-            c = difference
-    return c
-
-def apply_threshold(image, operation, none_thresh, increment):
-    
-    img_arr = np.copy(image)
-    
-    for i in range(img_arr.shape[0]):
-        for j in range(img_arr.shape[1]):
-            new_cell = shadow_threshold(img_arr[i][j], operation, none_thresh, increment) # final values chosen
-            img_arr[i][j] = new_cell
-    
-    return img_arr
-
-def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple brighten_sums
-                       none_thresh = 0, image_size = (224, 224)): # getting rid of the complete black
-    
-    # sticking with none_thresh = 0 for now, brightening everything except the background. 
-    # could try some thresholding on which pixels we brighten, or thresholding by zeroing some pixels.
-    
-    # resize/skeletonize first, and then random distribution  
-    img, modified_img = process_skeletonize(img, skeleton) # image size given
-    
-    # random distribution now 
-    flattened_img = modified_img.flatten()
-    random_img = np.random.permutation(flattened_img)
-    modified_img2 = np.reshape(random_img, image_size)
-        
-    # now for brightening code, will be brightening ALL pixels above 0/20? (above 0, brightening everything)
-    modified_img3 = apply_threshold(modified_img2, 'add', none_thresh, brighten_sum)
-    
-    img[:,:,0] = modified_img3
-    img[:,:,1] = modified_img3
-    img[:,:,2] = modified_img3
-    
-    img = Image.fromarray(img)
-
-    return img
-
+# preprocessing: systemic brightening
 
 # train code, fix with new addition.
 
-def train(data_dir, brighten_sum, experiment_name, skeleton=False,
-          num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
+def train(data_dir, thresh_type, intensity_change, brighten_sum, experiment_name, skeleton=False, none_thresh = 20, num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
     if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
-    if skeleton is True: 
-        f_params = f'./outputs/checkpoints/{experiment_name}/model_random_pixels_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/{experiment_name}/model_random_pixels_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/{experiment_name}/random_pixels_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.csv'
-    elif skeleton is False:
-        f_params = f'./outputs/checkpoints/{experiment_name}/model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/{experiment_name}/model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/{experiment_name}/random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.csv'
+    if skeleton is False: # always will be False right now
+        if thresh_type == 'below':
+            if intensity_change == 'brighten':
+                f_params = f'./outputs/checkpoints/{experiment_name}/model_systemic_brightening_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/{experiment_name}/model_systemic_brightening_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/{experiment_name}/systemic_brightening_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.csv'
+            elif intensity_change == 'dull':
+                f_params = f'./outputs/checkpoints/{experiment_name}/model_systemic_dulled_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.pt'
+                f_history = f'./outputs/histories/{experiment_name}/model_systemic_dulled_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.json'
+                csv_name = f'./outputs/probabilities/{experiment_name}/systemic_dulled_by_{brighten_sum}_above_{none_thresh}_epoch{num_epochs}.csv'
+                
+        elif thresh_type == 'above': # not adding this
+            f_params = f'./outputs/checkpoints/{experiment_name}/model_systemic_brightening_by_{brighten_sum}_below_{none_thresh}_epoch{num_epochs}.pt'
+            f_history = f'./outputs/histories/{experiment_name}/model_systemic_brightening_by_{brighten_sum}_below_{none_thresh}_epoch{num_epochs}.json'
+            csv_name = f'./outputs/probabilities/{experiment_name}/systemic_brightening_by_{brighten_sum}_below_{none_thresh}_epoch{num_epochs}.csv'
+            
         
         
     # fix these transforms    
-    train_transforms = transforms.Compose([transforms.Lambda(lambda img: randomly_distribute(img, skeleton, brighten_sum)), 
+    train_transforms = transforms.Compose([transforms.Lambda(lambda img: systemic_brightening(img, skeleton, thresh_type, intensity_change, brighten_sum)), 
                                            # image size + none_thresh are pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
@@ -146,7 +81,7 @@ def train(data_dir, brighten_sum, experiment_name, skeleton=False,
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda(lambda img: randomly_distribute(img, skeleton, brighten_sum)),
+    test_transforms = transforms.Compose([transforms.Lambda(lambda img: systemic_brightening(img, skeleton, thresh_type, intensity_change, brighten_sum)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
@@ -176,7 +111,8 @@ def train(data_dir, brighten_sum, experiment_name, skeleton=False,
     print()
     print(f'Data Directory: {data_dir}')
     print(f'Skeletonize: {skeleton}')
-    print(f'Brightened by: {brighten_sum} px')
+    print(f'Brighten or Dull: {intensity_change}')
+    print(f'Changed by: {brighten_sum} px')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -239,7 +175,7 @@ def train(data_dir, brighten_sum, experiment_name, skeleton=False,
 
 if __name__ == '__main__':
     
-    experiment_name = '#8(random_pixels)' # change depending on experiment
+    experiment_name = '#9(systemic_brightening)' # change depending on experiment
     data_dir = os.path.join('dataset')
     
     if not os.path.isdir(os.path.join('outputs', 'probabilities', experiment_name)):
@@ -249,21 +185,20 @@ if __name__ == '__main__':
     if not os.path.isdir(os.path.join('outputs', 'histories', experiment_name)):
         os.makedirs(os.path.join('outputs', 'histories', experiment_name))
 
-    # experiment 8 part 1
-        
-    # original: most logical
-    train(data_dir, 0, experiment_name, skeleton=False)
+    # experiment 9 part 1
               
-    # brightening increase
-    train(data_dir, 20, experiment_name, skeleton=False)
-    train(data_dir, 40, experiment_name, skeleton=False)
-    train(data_dir, 60, experiment_name, skeleton=False)
-    train(data_dir, 80, experiment_name, skeleton=False)
-    train(data_dir, 100, experiment_name, skeleton=False)
-    train(data_dir, 120, experiment_name, skeleton=False)
+    # dulling
+    train(data_dir, 'below', 'dull', 30, experiment_name, skeleton=False) # skeleton = False just for clarity
+    train(data_dir, 'below', 'dull', 60, experiment_name, skeleton=False)
+    train(data_dir, 'below', 'dull', 90, experiment_name, skeleton=False)
+    train(data_dir, 'below', 'dull', 120, experiment_name, skeleton=False)
+    train(data_dir, 'below', 'dull', 150, experiment_name, skeleton=False)
+
     
-    # weird test, cause theoretically should have NO information now, since all intensities are constant + no structure
-    train(data_dir, 0, experiment_name, skeleton=True)
-
-
+    # brightening increase
+        # train(data_dir, 'below', 30, experiment_name, skeleton=False) # skeleton = False just for clarity
+        # train(data_dir, 'below', 60, experiment_name, skeleton=False)
+        # train(data_dir, 'below', 90, experiment_name, skeleton=False)
+        # train(data_dir, 'below', 120, experiment_name, skeleton=False)
+        # train(data_dir, 'below', 150, experiment_name, skeleton=False)
 
