@@ -185,7 +185,7 @@ def checksum(optic_csv_path):
         col_sum = img_compare[:,100:240].sum()
         
         checksum_arr.append(all_sum + col_sum)
-        id_arr.append(i)
+        id_arr.append(i) 
     
     checksum_dict = {id_arr[i]: checksum_arr[i] for i in range(len(id_arr))}
     
