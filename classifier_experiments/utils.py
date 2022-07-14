@@ -27,8 +27,31 @@ from tensorflow import keras
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from sklearn import metrics
+from tqdm import tqdm
 
 # beginner functions ---------------------------------------------------------------------------------------------------------
+
+def get_race_from_id(img_id, race_csv_path):
+
+    race_data = pd.read_csv(race_csv_path)
+    img_row = race_data.loc[race_data['image_id'] == int(img_id)] # they both must be ints
+    img_row = img_row.reset_index(drop=True) # for .at to work
+    img_race = img_row.at[0,'race']
+    
+    return img_race   
+
+def image_from_id(img_path, path_name):
+    arr = np.array(Image.open(img_path + path_name))
+    resized = cv2.resize(arr, (256,256))
+    channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((256,256,3))
+    
+    return channels
+
+def count_nonzero(img, threshold):
+    count_img = np.array(img)
+    nonzero_count = np.count_nonzero(count_img > threshold)
+    
+    return nonzero_count
 
 def process_skeletonize(img, skeleton, 
                         image_size): # (224, 224) typically
@@ -105,6 +128,41 @@ def substitute_channels(img, substitute):
     return img
 
 
+def image_center_from_id(QA_csv, img_id, img_size):
+    img_row = QA_csv[QA_csv['img_id'] == img_id] # check if string
+    
+    y_og = img_row['y'].reset_index(drop=True)[0]
+    x_og = img_row['x'].reset_index(drop=True)[0]
+    
+    x_pos = (80 + y_og) * img_size[1]/640 # x size is 640, cropped that way
+    y_pos = (x_og)* img_size[0]/480 # y size is 480 (also, height is first in img size tuple, so the 0)
+    
+    disk_center = (int(x_pos), int(y_pos))
+    
+    return disk_center
+
+def load_QA_csv(optic_disk_csv = "/users/riya/race/optic_disk/DeepROP/quality_assurance/QA.csv"):
+    QA_csv = pd.read_csv(optic_disk_csv)
+    
+    QA_csv.columns.values[0] = "img_id"
+    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
+    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
+
+    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
+    
+    return QA_csv
+
+def load_eye_key_csv(optic_disk_csv = "/users/riya/race/optic_disk/DeepROP/quality_assurance/QA.csv"):
+    QA_csv = pd.read_csv(optic_disk_csv)
+    
+    QA_csv.columns.values[0] = "img_id"
+    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
+    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
+
+    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
+    
+    return QA_csv
+
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
 def checksum(optic_csv_path):
@@ -119,13 +177,7 @@ def checksum(optic_csv_path):
     # optic_csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
     data_compare_path = "/users/riya/race/dataset/segmentations/"
 
-    QA_csv = pd.read_csv(optic_csv_path)
-
-    QA_csv.columns.values[0] = "img_id"
-    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
-    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
-
-    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
+    QA_csv = load_QA_csv() # returns only images with optics disks
 
     for i in tqdm(QA_csv['img_id']):
         img_compare = np.array(Image.open(data_compare_path + str(i) + '.bmp'))
@@ -138,6 +190,11 @@ def checksum(optic_csv_path):
     checksum_dict = {id_arr[i]: checksum_arr[i] for i in range(len(id_arr))}
     
     return QA_csv, checksum_dict
+
+def determine_image_side_view(img, img_size, QA_csv, checksum_dict): 
+    
+    # return whether eye is left or right & eye view (posterior, nasal, etc.)
+
 
 def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic disk
     
@@ -152,7 +209,9 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     
     # all images are of size 480 x 480
     
-    img_row = QA_csv[QA_csv['img_id'] == id_og] # check if string
+    disk_center = image_center_from_id(QA_csv, id_og, img_size)
+    
+    """img_row = QA_csv[QA_csv['img_id'] == id_og] # check if string
     
     y_og = img_row['y'].reset_index(drop=True)[0]
     x_og = img_row['x'].reset_index(drop=True)[0]
@@ -162,12 +221,24 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     
     # never subtract 480 because from the top :( and image orientation is naturally from the top)
     
-    disk_center = (int(x_pos), int(y_pos)) # for (224, 224) image that will be created soon
+    disk_center = (int(x_pos), int(y_pos)) # for (224, 224) image that will be created soon"""
     
     return disk_center
 
 
-# make a ring mask function, that can account for creating both shadow and ring masks pretty easily
+# These region masks create center masks (center hidden), which can then be inverted to make back masks easily.
+
+def ring_region_mask(disk_center, ring_radiuses, # region will be radius (0, ..region)
+                     image_size = (224, 224)):
+
+    # white background
+    center_mask = np.full(image_size, 255, dtype=np.uint8)
+    # large black circle on outside
+    cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
+    # smaller white circle on inside
+    cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
+    
+    return center_mask
 
 
 def multiple_ring_mask(disk_center, num_rings, ring_radiuses,
@@ -194,9 +265,55 @@ def multiple_ring_mask(disk_center, num_rings, ring_radiuses,
     
     return center_mask
 
-
+def isolating_macula_mask(eye_direction, eye_view,
+                       image_size = (224, 224)):
+    
+    # mask will select the macular regions of the images
+    
+    # white background
+    select_macula = np.full(image_size, 255, dtype=np.uint8)
+    
+    half_x = int(image_size[0]/2)
+    half_y = int(image_size[1]/2)
+    
+    if eye_direction == 'os':
+        if eye_view == 'posterior' or eye_view == 'nasal' or eye_view == 'temporal':  
+            cv2.rectangle(select_macula, (0,image_size[1]), (half_x, 0), (0, 0, 0), -1) 
+    elif eye_direction == 'od':
+        if eye_view == 'posterior' or eye_view == 'nasal' or eye_view == 'temporal':
+            cv2.rectangle(select_macula, (half_x,image_size[1]), (image_size[0], 0), (0, 0, 0), -1) 
+            
+    if eye_view == 'inferior':
+        cv2.rectangle(select_macula, (0,image_size[1]), (image_size[0], half_y), (0, 0, 0), -1)     
+    elif eye_view == 'superior':
+        cv2.rectangle(select_macula, (0,half_y), (image_size[0], 0), (0, 0, 0), -1) 
+    
+    return select_macula
 
 # lambda applied functions --------------------------------------------------------------------------------------------------------------
+
+def macula_focus(img, skeleton, eye_direction, eye_view, brighten_sum, region,
+                     none_thresh = 0, image_size = (224, 224)):
+    
+    img, _ , modified_img = process_skeletonize(img, skeleton, image_size) # image size given
+    
+    # develop mask
+    
+    select_macula = isolating_macula_mask(eye_direction, eye_view)
+    mask_macula = cv2.bitwise_not(select_macula)
+    
+    if (region == 'show_macula'): # could be for ring or not for ring
+        modified_img2 = cv2.bitwise_or(modified_img, modified_img, mask=select_macula)
+        
+    elif (region == 'hide_macula'):
+        # masking the center region
+        modified_img2 = cv2.bitwise_or(modified_img, modified_img, mask=mask_macula)
+    
+    # now for brightening code
+    modified_img3 = apply_threshold(modified_img2, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default. Not dulling.
+    final_img = substitute_channels(img, modified_img3)
+    
+    return final_img
 
 def systemic_brightening(img, skeleton, thresh_type, intensity_change, brighten_sum,
                          none_thresh = 20, image_size = (224, 224)):
@@ -236,7 +353,7 @@ def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple bri
     # could try some thresholding on which pixels we brighten, or thresholding by zeroing some pixels.
     
     # resize/skeletonize first, and then random distribution  
-    img, _ , modified_img = process_skeletonize(img, skeleton) # image size given
+    img, _ , modified_img = process_skeletonize(img, skeleton, image_size) # image size given
     
     # random distribution now 
     flattened_img = modified_img.flatten()
@@ -254,7 +371,7 @@ def half_skeletonize(img, disk_center, skeleton_radiuses, region,
                     image_size = (224, 224)): 
     
     
-    img, channel, skeleton_channel = process_skeletonize(img, True) # definitely skeletonizing!
+    img, channel, skeleton_channel = process_skeletonize(img, True, image_size) # definitely skeletonizing!
     
     # create masks to shadow channel & skeleton_channel
     center_mask = np.full(image_size, 255, dtype=np.uint8)
