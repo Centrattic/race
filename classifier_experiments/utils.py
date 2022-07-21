@@ -31,19 +31,17 @@ from tqdm import tqdm
 
 # beginner functions ---------------------------------------------------------------------------------------------------------
 
-def get_race_from_id(img_id, race_csv_path):
-
-    race_data = pd.read_csv(race_csv_path)
-    img_row = race_data.loc[race_data['image_id'] == int(img_id)] # they both must be ints
+def get_colvalue_from_id(img_id, image_data, colname):
+    img_row = image_data.loc[image_data['image_id'] == int(img_id)] # they both must be ints
     img_row = img_row.reset_index(drop=True) # for .at to work
-    img_race = img_row.at[0,'race']
+    img_value = img_row.at[0,colname]
     
-    return img_race   
+    return img_value   
 
-def image_from_id(img_path, path_name):
+def channeled_image_from_id(img_path, path_name, image_size): # will reshape to 3 channels! careful!
     arr = np.array(Image.open(img_path + path_name))
-    resized = cv2.resize(arr, (256,256))
-    channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((256,256,3))
+    resized = cv2.resize(arr, image_size)
+    channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((image_size[0], image_size[1],3))
     
     return channels
 
@@ -53,21 +51,22 @@ def count_nonzero(img, threshold):
     
     return nonzero_count
 
-def process_skeletonize(img, skeleton, 
+def process_skeletonize(img, skeleton, # the channel here was weird for half_skeletonize but didn't appear a training issue???
                         image_size): # (224, 224) typically
     img = np.copy(img)
     img = np.array(img)
     
     img = cv2.resize(img, image_size)
     
-    # defining channel which will be duplicated late (in case it's not already with Image Folder??)
+    # defining channel which will be duplicated later (in case it's not already with Image Folder??)
     channel = img[:,:,0]
     
     if skeleton is True:
         # thresholding (removing these pixels) can be done with this line
         # skeleton_channel[skeleton_channel < 20] = 0   
-        channel[channel > 0] = 255       
-        modified_img = skeletonize(channel, method='lee')
+        skeleton_channel = np.copy(channel)
+        skeleton_channel[skeleton_channel > 0] = 255       
+        modified_img = skeletonize(skeleton_channel, method='lee')
     
     elif skeleton is not True:
         modified_img = channel
@@ -129,7 +128,7 @@ def substitute_channels(img, substitute):
 
 
 def image_center_from_id(QA_csv, img_id, img_size):
-    img_row = QA_csv[QA_csv['img_id'] == img_id] # check if string
+    img_row = QA_csv[QA_csv['image_id'] == img_id] # check if string
     
     y_og = img_row['y'].reset_index(drop=True)[0]
     x_og = img_row['x'].reset_index(drop=True)[0]
@@ -144,28 +143,46 @@ def image_center_from_id(QA_csv, img_id, img_size):
 def load_QA_csv(optic_disk_csv = "/users/riya/race/optic_disk/DeepROP/quality_assurance/QA.csv"):
     QA_csv = pd.read_csv(optic_disk_csv)
     
-    QA_csv.columns.values[0] = "img_id"
+    QA_csv.columns.values[0] = "image_id"
     QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
-    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
+    QA_csv[['image_id', 'Full path', 'x', 'y', 'is_posterior']]
 
     QA_csv = QA_csv[QA_csv['is_posterior'] == True]
     
     return QA_csv
 
-def load_eye_key_csv(optic_disk_csv = "/users/riya/race/optic_disk/DeepROP/quality_assurance/QA.csv"):
-    QA_csv = pd.read_csv(optic_disk_csv)
+def load_eye_key_csv(eye_key_csv = "/users/riya/race/csv/image_eye_key.csv",
+                    race_data_csv = "/users/riya/race/csv/image_race_data.csv"):
     
-    QA_csv.columns.values[0] = "img_id"
-    QA_csv.columns = QA_csv.columns.to_series().apply(lambda x: x.strip())
-    QA_csv[['img_id', 'Full path', 'x', 'y', 'is_posterior']]
+    eye_info_csv = pd.read_csv(eye_key_csv)
+    race_data_csv = pd.read_csv(race_data_csv)
+    
+    eye_info_csv = eye_info_csv[eye_info_csv.image_id.isin(race_data_csv['image_id'])]
+    
+    return eye_info_csv
 
-    QA_csv = QA_csv[QA_csv['is_posterior'] == True]
+def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
+    nonskel_0 = pd.read_csv(preds_path + 'nonskeletonized_nonzero_count_above_0.csv')
+    skel_0 = pd.read_csv(preds_path + 'skeletonized_nonzero_count_above_0.csv')
     
-    return QA_csv
+    nonskel_0_white = nonskel_0[nonskel_0['race'] == 'white']
+    nonskel_0_black = nonskel_0[nonskel_0['race'] == 'black']
+
+    skel_0_white = skel_0[skel_0['race'] == 'white']
+    skel_0_black = skel_0[skel_0['race'] == 'black']
+    
+    # will use median for now. can change to mean if significant.
+    
+    nonzero_dict = {'skeletonized_white': np.median(skel_0_white['0-159']),
+                'skeletonized_black': np.median(skel_0_black['0-159']),
+                'non-skeletonized_white': np.median(nonskel_0_white['0-159']),
+                'non-skeletonized_black': np.median(nonskel_0_black['0-159'])}
+    
+    return nonzero_dict
 
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
-def checksum(optic_csv_path):
+def checksum(data_csv, data_path = "/users/riya/race/dataset/segmentations/"):
     
     # Turns out that around 31 of the images are actual duplicates! I looked at 10 and saw that they were 
     # (or VERY close to duplicates), with difference image having very few nonzero pixels
@@ -175,12 +192,11 @@ def checksum(optic_csv_path):
     id_arr = []
 
     # optic_csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
-    data_compare_path = "/users/riya/race/dataset/segmentations/"
 
-    QA_csv = load_QA_csv() # returns only images with optics disks
+    # returns only images with optics disks
 
-    for i in tqdm(QA_csv['img_id']):
-        img_compare = np.array(Image.open(data_compare_path + str(i) + '.bmp'))
+    for i in tqdm(data_csv['image_id']):
+        img_compare = np.array(Image.open(data_path + str(i) + '.bmp'))
         all_sum = np.concatenate(img_compare).sum()
         col_sum = img_compare[:,100:240].sum()
         
@@ -189,18 +205,33 @@ def checksum(optic_csv_path):
     
     checksum_dict = {id_arr[i]: checksum_arr[i] for i in range(len(id_arr))}
     
-    return QA_csv, checksum_dict
+    return data_csv, checksum_dict
 
-def determine_image_side_view(img, img_size, QA_csv, checksum_dict): 
+def determine_image_side_view(img, eye_info_csv, checksum_dict): 
     
     # return whether eye is left or right & eye view (posterior, nasal, etc.)
-
+    
+    id_og = '' # original id of image, for comparison
+    
+    img_og = np.array(img) # our original image
+    img_og = img_og[:,:,0]
+    
+    checksum_og = np.concatenate(img_og).sum() + img_og[:,100:240].sum()
+    
+    id_og = list(checksum_dict.keys())[list(checksum_dict.values()).index(checksum_og)] # finding id for which checksum_og matches
+    
+    eye_direction = get_colvalue_from_id(id_og, eye_info_csv, 'eye')
+    eye_view = get_colvalue_from_id(id_og, eye_info_csv, 'view')
+    
+    eye_tuple = (eye_direction, eye_view)
+    
+    return eye_tuple
 
 def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic disk
     
     id_og = '' # original id of image, for comparison
     
-    img_og = np.array(img) # our original image
+    img_og = np.array(img) # our original imageimg_og
     img_og = img_og[:,:,0]
     
     checksum_og = np.concatenate(img_og).sum() + img_og[:,100:240].sum()
@@ -265,10 +296,13 @@ def multiple_ring_mask(disk_center, num_rings, ring_radiuses,
     
     return center_mask
 
-def isolating_macula_mask(eye_direction, eye_view,
+def isolating_macula_mask(eye_tuple,
                        image_size = (224, 224)):
     
     # mask will select the macular regions of the images
+    
+    eye_direction = eye_tuple[0]
+    eye_view = eye_tuple[1]
     
     # white background
     select_macula = np.full(image_size, 255, dtype=np.uint8)
@@ -276,10 +310,10 @@ def isolating_macula_mask(eye_direction, eye_view,
     half_x = int(image_size[0]/2)
     half_y = int(image_size[1]/2)
     
-    if eye_direction == 'os':
+    if eye_direction == 'os': # left
         if eye_view == 'posterior' or eye_view == 'nasal' or eye_view == 'temporal':  
             cv2.rectangle(select_macula, (0,image_size[1]), (half_x, 0), (0, 0, 0), -1) 
-    elif eye_direction == 'od':
+    elif eye_direction == 'od': # right 
         if eye_view == 'posterior' or eye_view == 'nasal' or eye_view == 'temporal':
             cv2.rectangle(select_macula, (half_x,image_size[1]), (image_size[0], 0), (0, 0, 0), -1) 
             
@@ -292,14 +326,50 @@ def isolating_macula_mask(eye_direction, eye_view,
 
 # lambda applied functions --------------------------------------------------------------------------------------------------------------
 
-def macula_focus(img, skeleton, eye_direction, eye_view, brighten_sum, region,
+def average_pixel_count(img, nonzero_dict, # all images 224 x 224
+                    image_size = (224, 224)):
+    
+    # averaging count by removing low intensity pixels from white images
+    
+    number_of_pixels = int(abs(nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'])) # skeleton images
+
+    img, channel, modified_channel = process_skeletonize(img, True, image_size) # yes skeletonize ALWAYS
+
+    pixel_dict = dict(enumerate(channel.flatten(), 1)) # chooses one channel, they will be duplicated
+    pixel_dict = {key - 1:val for key, val in pixel_dict.items() if val != 0}
+    
+    sorted_dict = {}
+    sorted_keys = sorted(pixel_dict, key = pixel_dict.get)
+    for w in sorted_keys:
+        sorted_dict[w] = pixel_dict[w]
+      
+    # skeletonize img
+    img_flatten = channel.flatten()
+    skeleton_img_flatten = modified_channel.flatten()
+    
+    i = 0
+    
+    for key, value in sorted_dict.items(): # should go in sorted order, from min to max PIV
+        assert img_flatten[key] == value # sanity check
+        if i < number_of_pixels: # not <= 
+            if skeleton_img_flatten[key] != 0: # pixel hasn't been removed in skeletonization
+                skeleton_img_flatten[key] = 0 # for white images, removing pixels
+                i+=1
+    
+    skeleton_channel = skeleton_img_flatten.reshape(image_size)
+    final_img = substitute_channels(img, skeleton_channel)
+
+    return final_img    
+    
+
+def macula_focus(img, skeleton, eye_tuple, brighten_sum, region, # eye_tuple has (eye_direction, eye_view)
                      none_thresh = 0, image_size = (224, 224)):
     
     img, _ , modified_img = process_skeletonize(img, skeleton, image_size) # image size given
     
     # develop mask
     
-    select_macula = isolating_macula_mask(eye_direction, eye_view)
+    select_macula = isolating_macula_mask(eye_tuple)
     mask_macula = cv2.bitwise_not(select_macula)
     
     if (region == 'show_macula'): # could be for ring or not for ring
