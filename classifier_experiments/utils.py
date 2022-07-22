@@ -267,7 +267,8 @@ def ring_region_mask(disk_center, ring_radiuses, # region will be radius (0, ..r
     # large black circle on outside
     cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
     # smaller white circle on inside
-    cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
+    if ring_radiuses[0] > 0:
+        cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
     
     return center_mask
 

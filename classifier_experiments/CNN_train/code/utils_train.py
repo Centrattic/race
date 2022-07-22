@@ -40,9 +40,12 @@ def get_colvalue_from_id(img_id, image_data, colname):
 
 def channeled_image_from_id(img_path, path_name, image_size): # will reshape to 3 channels! careful!
     arr = np.array(Image.open(img_path + path_name))
-    resized = cv2.resize(arr, image_size)
+    # print(arr.shape)
+    resized = cv2.resize(arr, (image_size[1], image_size[0])) # cv2.resize takes (width, height), which is (640, 480)!!
+    # print(resized.shape)
     channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((image_size[0], image_size[1],3))
-    
+    # print(channels.shape)
+
     return channels
 
 def count_nonzero(img, threshold):
@@ -162,8 +165,9 @@ def load_eye_key_csv(eye_key_csv = "/users/riya/race/csv/image_eye_key.csv",
     return eye_info_csv
 
 def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
-    nonskel_0 = pd.read_csv(preds_path + 'nonskeletonized_nonzero_count_above_0.csv')
-    skel_0 = pd.read_csv(preds_path + 'skeletonized_nonzero_count_above_0.csv')
+    nonskel_0 = pd.read_csv(preds_path + 'train_set_nonskeletonized_nonzero_count_above_0.csv') # bad. probably wrong
+    skel_0 = pd.read_csv(preds_path + 'train_set_skeletonized_nonzero_count_above_0.csv') 
+    # new version appears correct (with all 3181 train set images))
     
     nonskel_0_white = nonskel_0[nonskel_0['race'] == 'white']
     nonskel_0_black = nonskel_0[nonskel_0['race'] == 'black']
@@ -173,30 +177,31 @@ def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonz
     
     # will use median for now. can change to mean if significant.
     
-    nonzero_dict = {'skeletonized_white': np.median(skel_0_white['0-159']),
-                'skeletonized_black': np.median(skel_0_black['0-159']),
-                'non-skeletonized_white': np.median(nonskel_0_white['0-159']),
-                'non-skeletonized_black': np.median(nonskel_0_black['0-159'])}
+    nonzero_dict = {'skeletonized_white': np.median(skel_0_white['0-318']),
+                'skeletonized_black': np.median(skel_0_black['0-318']),
+                'non-skeletonized_white': np.median(nonskel_0_white['0-318']),
+                'non-skeletonized_black': np.median(nonskel_0_black['0-318'])}
     
     return nonzero_dict
 
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
-def checksum(data_csv, data_path = "/users/riya/race/dataset/segmentations/"):
+def checksum(data_csv_path, data_path = "/users/riya/race/dataset/segmentations/"): # images with equal checksums are VERY close duplicates
     
-    # Turns out that around 31 of the images are actual duplicates! I looked at 10 and saw that they were 
-    # (or VERY close to duplicates), with difference image having very few nonzero pixels
-    # Checksum is getting the best of it, then.
+    # done with images in original shape of (480, 640, 1)
+    
+    data_csv = pd.read_csv(data_csv_path)
     
     checksum_arr = []
     id_arr = []
 
     # optic_csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
-
     # returns only images with optics disks
 
     for i in tqdm(data_csv['image_id']):
         img_compare = np.array(Image.open(data_path + str(i) + '.bmp'))
+        
+        # print (img_compare.shape)
         all_sum = np.concatenate(img_compare).sum()
         col_sum = img_compare[:,100:240].sum()
         
@@ -256,27 +261,22 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     
     return disk_center
 
-def determine_image_race(img, img_size, QA_csv, checksum_dict): # using optic disk
+def determine_image_race(img, race_data, checksum_dict): # using optic disk
     
     id_og = '' # original id of image, for comparison
     
-    img_og = np.array(img) # our original imageimg_og
-    img_og = img_og[:,:,0]
+    img_og = np.array(img) 
+    img_og = img_og[:,:,0] # our original image, of size (480, 640, 1)
+    
+    # print (img_og.shape)
     
     checksum_og = np.concatenate(img_og).sum() + img_og[:,100:240].sum()
     
     id_og = list(checksum_dict.keys())[list(checksum_dict.values()).index(checksum_og)] # finding id for which checksum_og matches
-    
-    # all images are of size 480 x 480
-    
-    # def get_colvalue_from_id(img_id, image_data, colname):
         
-        
-    disk_center = image_center_from_id(QA_csv, id_og, img_size)
-    
-    
-    
-    return disk_center
+    img_race = get_colvalue_from_id(id_og, race_data, 'race')
+   
+    return img_race
 
 
 # These region masks create center masks (center hidden), which can then be inverted to make back masks easily.
@@ -289,7 +289,9 @@ def ring_region_mask(disk_center, ring_radiuses, # region will be radius (0, ..r
     # large black circle on outside
     cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
     # smaller white circle on inside
-    cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
+    
+    if ring_radiuses[0] > 0: # center hidden aah!
+        cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
     
     return center_mask
 
@@ -348,12 +350,12 @@ def isolating_macula_mask(eye_tuple,
 
 # lambda applied functions --------------------------------------------------------------------------------------------------------------
 
-def average_pixel_count(img, img_race, nonzero_dict, # all images 224 x 224
+def average_pixel_count(img, img_race, number_of_pixels, # all images 224 x 224
                     image_size = (224, 224)):
     
     # averaging count by removing low intensity pixels from white images
-    number_of_pixels = nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'] # skeleton images
-    number_of_pixels = int(abs(number_of_pixels))
+    # number_of_pixels = nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'] # skeleton images
+    # number_of_pixels = int(abs(number_of_pixels))
     # nonzero dict contains information for 1 channel, so no division.
 
     img, channel, modified_channel = process_skeletonize(img, True, image_size) # yes skeletonize ALWAYS
