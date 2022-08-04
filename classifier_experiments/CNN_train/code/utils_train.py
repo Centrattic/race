@@ -121,13 +121,15 @@ def apply_threshold(image, operation, none_thresh, increment, thresh_type = 'bel
 
 def substitute_channels(img, substitute):
     
-    img[:,:,0] = substitute
-    img[:,:,1] = substitute
-    img[:,:,2] = substitute
+    img_copy = np.copy(img)
     
-    img = Image.fromarray(img)
+    img_copy[:,:,0] = substitute
+    img_copy[:,:,1] = substitute
+    img_copy[:,:,2] = substitute
     
-    return img
+    img_copy = Image.fromarray(img_copy)
+    
+    return img_copy
 
 
 def image_center_from_id(QA_csv, img_id, img_size):
