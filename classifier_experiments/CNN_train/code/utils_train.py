@@ -9,6 +9,7 @@ from PIL import Image
 import cv2
 import re
 import glob
+import random
 
 from skorch import NeuralNetClassifier
 from skorch.callbacks import LRScheduler, Checkpoint, EpochScoring, EarlyStopping
@@ -231,6 +232,21 @@ def nonzero_pixel_check_during_training(data_loader):
     
     return (np.median(black_non_zero), np.median(white_non_zero))
 
+def make_area_sorted_dict(numLabels, stats):
+
+    area_info = [0] * numLabels
+    area_sorted_dict = {}
+    
+    for i in range(0, numLabels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        area_info[i] = area
+    
+    area_dict = dict(pd.value_counts(area_info)) 
+    for key in sorted(area_dict.keys()):
+        area_sorted_dict[key] = area_dict[key]
+    
+    return area_sorted_dict
+
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
 def checksum(data_csv_path, data_path = "/users/riya/race/dataset/segmentations/"): # images with equal checksums are VERY close duplicates
@@ -446,7 +462,90 @@ def average_pixel_count_random_images(img_channel, median_number_of_pixels, # al
     
     return reshapen_img    
 
+def determine_image_info(number_of_pixels, area_sorted_dict):
+    remaining_pixels = number_of_pixels
+    
+    for i in area_sorted_dict.keys(): # keys in the right sort order
+        included_pixels = area_sorted_dict[i] * i 
+        remaining_pixels -= included_pixels
+            
+        if remaining_pixels < 0: # we've reached our i limit
+            limit_reached = i
+            modulus_pixels = remaining_pixels + included_pixels
+            number_vessels = int(np.floor(modulus_pixels/limit_reached))
+            vessel_remainder = (modulus_pixels % limit_reached) # remainder, shld be int
+            return limit_reached, number_vessels, vessel_remainder # return vs. the break (for loop indent)
+        
+def make_removed_components_mask(limit_reached, number_vessels, vessel_remainder, number_of_pixels, 
+                                 numLabels, labels, stats): # exists per image 
+    counter = 0
+    mask = np.zeros((224, 224)).astype("uint8")
+    randint_arr = [0.5] * numLabels # cause there'll never be a decimal label
+    test_arr = [0]
+    
+    for i in range(0, numLabels): # not accounting for vessel fraction just yet
+        
+        img_index = 0.5
+        while img_index in randint_arr: # will always be at first
+            img_index = random.randint(0, numLabels-1) # retry man
+        
+        randint_arr[i] = img_index
+ 
+        # above is inefficient code!
+        
+        area = stats[img_index, cv2.CC_STAT_AREA]
+        
+        if area < limit_reached:
+            componentMask = (labels == img_index).astype("uint8") * 255
+            mask = cv2.bitwise_or(mask, componentMask)
+
+        elif area == limit_reached:
+            if counter < number_vessels:
+                test_arr = np.append(test_arr, img_index)
+                componentMask = (labels == img_index).astype("uint8") * 255
+                mask = cv2.bitwise_or(mask, componentMask)
+                counter+=1
+            # only happen when all limit reached vessels are gone. 
+            # Then adding to counter, so vessel remainder happens only once
+            elif counter == number_vessels:
+                componentMask = (labels == img_index).astype("uint8") * 255
+                num_pixels_remove = np.count_nonzero(componentMask) - vessel_remainder    
+                a,b = np.nonzero(componentMask) # getting arrays of (a,b) nonzero indices
+                index = np.random.choice(len(a), num_pixels_remove, replace=False)
+                componentMask[a[index], b[index]] = 0
+                mask = cv2.bitwise_or(mask, componentMask)
+                
+                counter+=1; # out of this elif
+                
+    final_mask = mask
+
+    return final_mask     
+
 # lambda applied functions --------------------------------------------------------------------------------------------------------------
+def average_nonzero_pixels_with_vessels(img, img_race, number_of_pixels, connectivity,
+                                       image_size = (224, 224)):
+    img_resize, img_channel, img_skel_channel = process_skeletonize(img, True, image_size) # (224, 224)   
+    
+    if img_race == 'white':
+        numLabels, labels, stats, centroids = cv2.connectedComponentsWithStats(img_skel_channel, 
+                                                                               cv2.CV_32S, connectivity=connectivity)
+
+        area_sorted_dict = make_area_sorted_dict(numLabels, stats)
+        limit_reached, number_vessels, vessel_remainder = determine_image_info(number_of_pixels, area_sorted_dict)
+        final_mask = make_removed_components_mask(limit_reached, number_vessels, vessel_remainder, 
+                                                  number_of_pixels, numLabels, labels, stats)
+        modified_channel = img_skel_channel - final_mask
+
+    elif img_race == 'black':
+        modified_channel = img_skel_channel # no change
+        
+    # print(np.count_nonzero(img_skel_channel), np.count_nonzero(modified_channel))
+    final_img = substitute_channels(img_resize, modified_channel)
+
+    # print(np.count_nonzero(img_channel), np.count_nonzero(img_skel_channel) * 3, np.count_nonzero(final_img))
+    
+    return final_img
+
 def average_pixel_count(img, img_race, number_of_pixels, # all images 224 x 224
                     image_size = (224, 224)):
     

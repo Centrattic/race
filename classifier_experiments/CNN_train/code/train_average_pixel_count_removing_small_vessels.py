@@ -25,7 +25,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
-from utils_train import make_nonzero_dict, checksum, determine_image_race, average_pixel_count, nonzero_pixel_check_during_training
+from utils_train import make_nonzero_dict, checksum, determine_image_race, nonzero_pixel_check_during_training, average_nonzero_pixels_with_vessels
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
@@ -44,21 +44,20 @@ class PretrainedModel(nn.Module):
         return self.model(x)
     
 # preprocessing functions (trying keeping them in here vs. utils_train for now)
-    
-    
+
 
 # train code, simple bc functions do the hard lifting.
 
-def train(data_dir, experiment_name, set_name,
+def train(data_dir, experiment_name, set_name, connectivity,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
     device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
     if device == 'cuda:3': # using all available gpus
         torch.cuda.empty_cache()
 
-    f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_normalized_nonzero_pixels_epoch{num_epochs}.pt'
-    f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_normalized_nonzero_pixels_epoch{num_epochs}.json'
-    csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_normalized_nonzero_pixels_epoch{num_epochs}.csv'
+    f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_connectivity_{connectivity}_epoch{num_epochs}.pt'
+    f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_connectivity_{connectivity}_epoch{num_epochs}.json'
+    csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_connectivity_{connectivity}_epoch{num_epochs}.csv'
     
     if set_name == "train_test_val_set":
         nonzero_dict_train = make_nonzero_dict('train')
@@ -84,7 +83,7 @@ def train(data_dir, experiment_name, set_name,
     race_data, checksum_dict = checksum(data_csv_path) # what if, since checksum is all 4546, it identifies ID as image not even in train set! Probably pretty rare.
     
     # fix these transforms    
-    train_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_train)), 
+    train_transforms = transforms.Compose([transforms.Lambda(lambda img: average_nonzero_pixels_with_vessels(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_train, connectivity)), 
                                            # image size + none_thresh are pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
@@ -94,13 +93,13 @@ def train(data_dir, experiment_name, set_name,
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_test)),
+    test_transforms = transforms.Compose([transforms.Lambda(lambda img: average_nonzero_pixels_with_vessels(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_test, connectivity)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
                                                                [0.5, 0.5, 0.5])])
     
-    val_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_val)),
+    val_transforms = transforms.Compose([transforms.Lambda(lambda img: average_nonzero_pixels_with_vessels(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_val, connectivity)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
@@ -224,7 +223,7 @@ def train(data_dir, experiment_name, set_name,
 
 if __name__ == '__main__':
     
-    experiment_name = '#11(average_pixel_count)' # change depending on experiment
+    experiment_name = '#12(average_pixel_count_with_vessels)' # change depending on experiment
     data_dir = os.path.join('dataset_full')
     
     if not os.path.isdir(os.path.join('outputs', 'probabilities', experiment_name)):
@@ -236,10 +235,12 @@ if __name__ == '__main__':
 
     # experiment 11 part 1
         
-    # original: most logical
-    train(data_dir, experiment_name, 'train_test_val_set') # exactly equal nonzero pixel count values
-    train(data_dir, experiment_name, 'full_set') # non equal (exact) nonzero pixel count values
+    # train test val set
+    train(data_dir, experiment_name, 'train_test_val_set', connectivity = 4) # exactly equal nonzero pixel count values
+    train(data_dir, experiment_name, 'train_test_val_set', connectivity = 8) # exactly equal nonzero pixel count values
     
-    # try normalizing val + train together?? Hmm idk. Full_set should be okay.
-    
-    # I guess there's not a lot of parameter's we're looking at right now. Would be totally different for random pixels.
+    # full set
+    train(data_dir, experiment_name, 'full_set', connectivity = 4) # non equal (exact) nonzero pixel count values
+    train(data_dir, experiment_name, 'full_set', connectivity = 8) # non equal (exact) nonzero pixel count values
+
+    # won't do random pixels as another option: I guess there's not a lot of parameter's we're looking at right now. Would be totally different for random pixels.
