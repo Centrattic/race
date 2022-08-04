@@ -25,6 +25,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
+from utils_train import make_nonzero_dict, checksum, determine_image_race, average_pixel_count, nonzero_pixel_check_during_training
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
@@ -45,27 +46,42 @@ class PretrainedModel(nn.Module):
 
 # train code, simple bc functions do the hard lifting.
 
-def train(data_dir, experiment_name,
+def train(data_dir, experiment_name, set_name,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
-    if device == 'cuda:1': # using all available gpus
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
+    if device == 'cuda:3': # using all available gpus
         torch.cuda.empty_cache()
 
-    f_params = f'./outputs/checkpoints/{experiment_name}/model_normalized_nonzero_pixels_epoch{num_epochs}.pt'
-    f_history = f'./outputs/histories/{experiment_name}/model_normalized_nonzero_pixels_epoch{num_epochs}.json'
-    csv_name = f'./outputs/probabilities/{experiment_name}/normalized_nonzero_pixels_epoch{num_epochs}.csv'
+    f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_normalized_nonzero_pixels_epoch{num_epochs}.pt'
+    f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_normalized_nonzero_pixels_epoch{num_epochs}.json'
+    csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_normalized_nonzero_pixels_epoch{num_epochs}.csv'
     
-    nonzero_dict = make_nonzero_dict()
-    number_of_pixels = number_of_pixels = nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'] # skeleton images
-    number_of_pixels = int(abs(number_of_pixels))
+    if set_name == "train_test_val_set":
+        nonzero_dict_train = make_nonzero_dict('train')
+        nonzero_dict_test = make_nonzero_dict('test')
+        nonzero_dict_val = make_nonzero_dict('val')
+    
+        number_of_pixels_train = int(abs(nonzero_dict_train['skeletonized_white'] - 
+                                         nonzero_dict_train['skeletonized_black'])) # skeleton images
+        number_of_pixels_test = int(abs(nonzero_dict_test['skeletonized_white'] - 
+                                        nonzero_dict_test['skeletonized_black'])) # skeleton images
+        number_of_pixels_val = int(abs(nonzero_dict_val['skeletonized_white'] - 
+                                        nonzero_dict_val['skeletonized_black'])) # skeleton images
+    
+    elif set_name == "full_set":
+        nonzero_dict = make_nonzero_dict('full_set')
+        number_of_pixels_train = int(abs(nonzero_dict['skeletonized_white'] - 
+                                         nonzero_dict['skeletonized_black'])) # skeleton images
+        number_of_pixels_test = number_of_pixels_train
+        number_of_pixels_val = number_of_pixels_train
     # nonzero dict contains information for 1 channel, so no division.
     
     data_csv_path = "/users/riya/race/csv/image_race_data.csv"  
-    race_data, checksum_dict = checksum(data_csv_path)
+    race_data, checksum_dict = checksum(data_csv_path) # what if, since checksum is all 4546, it identifies ID as image not even in train set! Probably pretty rare.
     
     # fix these transforms    
-    train_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels)), 
+    train_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_train)), 
                                            # image size + none_thresh are pre-defined
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
@@ -75,11 +91,19 @@ def train(data_dir, experiment_name,
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), nonzero_dict)),
+    test_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_test)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
                                                                [0.5, 0.5, 0.5])])
+    
+    val_transforms = transforms.Compose([transforms.Lambda(lambda img: average_pixel_count(img, determine_image_race(img, race_data, checksum_dict), number_of_pixels_val)),
+                                          # transforms.Resize(image_size),
+                                          transforms.ToTensor(),
+                                          transforms.Normalize([0.5, 0.5, 0.5],
+                                                               [0.5, 0.5, 0.5])])
+    
+    # testing code has an issue. Average pixel count will need to be computed for test images as well so that the model can be tested optimally (I should pass in that parameter). And what about val set, because model uses it to determine training time, although doesn't train from this ??
 
     train_folder = os.path.join(data_dir, 'train') # only training on segmentations      
     val_folder = os.path.join(data_dir, 'val')
@@ -87,7 +111,7 @@ def train(data_dir, experiment_name,
     
     # I guess this automatically creates 3 channels
     train_dataset = datasets.ImageFolder(train_folder, train_transforms)
-    val_dataset = datasets.ImageFolder(val_folder, test_transforms)
+    val_dataset = datasets.ImageFolder(val_folder, val_transforms)
     test_dataset = datasets.ImageFolder(test_folder, test_transforms)
     
     print ("Train/Test/Val datasets have been created.")
@@ -104,28 +128,37 @@ def train(data_dir, experiment_name,
     
     # checking that counts are equal
     
-    print ("Determining if Nonzero Pixel Counts are Equal")
+    print ("Checking Nonzero Pixel Counts")
     
-    black_non_zero = [0]
+    train_tuple = nonzero_pixel_check_during_training(train_dataset)
+    val_tuple = nonzero_pixel_check_during_training(val_dataset)
+    test_tuple = nonzero_pixel_check_during_training(test_dataset)
+    
+    """black_non_zero = [0]
     white_non_zero = [0]
+    
+    tmp = iter(train_dataset)
+    num_iterations = len(train_dataset.samples)
 
-    for i, _ in train_dataset.samples:
-        run_img = np.array(Image.open(i))
-        num_nonzero = np.count_nonzero(run_img)
-        if 'black' in i:
+    for i in tqdm(range(num_iterations)):
+        image, label = next(tmp)   
+        run_img = np.array(image) # not sure where equal median number comes from? Ohh prob different/lower because normalizing.
+        num_nonzero = int(np.count_nonzero(run_img)/3)
+
+        if label == 0:
             black_non_zero = np.append(black_non_zero, num_nonzero)
-        elif 'white' in i:
+        elif label == 1:
             white_non_zero = np.append(white_non_zero, num_nonzero)
 
     black_non_zero = black_non_zero[1:]
-    white_non_zero = white_non_zero[1:]
-    
+    white_non_zero = white_non_zero[1:]   """
 
     print()
     print(f'Data Directory: {data_dir}')
     print(f'Experiment Name: {experiment_name}')
-    print(f'White Median: {np.median(white_non_zero)}')
-    print(f'Black Median: {np.median(black_non_zero)}')
+    print(f'Train (Black, White) Median: {train_tuple}')
+    print(f'Val (Black, White) Median: {val_tuple}')
+    print(f'Test (Black, White) Median: {test_tuple}')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -201,7 +234,9 @@ if __name__ == '__main__':
     # experiment 11 part 1
         
     # original: most logical
+    train(data_dir, experiment_name, 'train_test_val_set') # exactly equal nonzero pixel count values
+    train(data_dir, experiment_name, 'full_set') # non equal (exact) nonzero pixel count values
     
-
-
-
+    # try normalizing val + train together?? Hmm idk. Full_set should be okay.
+    
+    # I guess there's not a lot of parameter's we're looking at right now. Would be totally different for random pixels.

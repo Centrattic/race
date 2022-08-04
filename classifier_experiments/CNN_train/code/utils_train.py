@@ -164,9 +164,32 @@ def load_eye_key_csv(eye_key_csv = "/users/riya/race/csv/image_eye_key.csv",
     
     return eye_info_csv
 
-def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
-    nonskel_0 = pd.read_csv(preds_path + 'train_set_nonskeletonized_nonzero_count_above_0.csv') # bad. probably wrong
-    skel_0 = pd.read_csv(preds_path + 'train_set_skeletonized_nonzero_count_above_0.csv') 
+def make_nonzero_dict(set_name, preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
+    
+    # all these refer to nonzero values for radiuses that include the whole image, not sections of the image
+    
+    if set_name == 'train':
+        nonskel_name = 'train_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'train_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'test':
+        nonskel_name = 'test_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'test_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'val':
+        nonskel_name = 'val_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'val_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'optic_disk_set':
+        nonskel_name = 'final_nonskeletonized_nonzero_count_above_0.csv' # this file does not exist
+        skel_name = 'final_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'full_set':
+        nonskel_name = 'full_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'full_set_skeletonized_nonzero_count_above_0.csv'
+        
+    nonskel_0 = pd.read_csv(preds_path + nonskel_name) # bad. probably wrong
+    skel_0 = pd.read_csv(preds_path + skel_name) 
     # new version appears correct (with all 3181 train set images))
     
     nonskel_0_white = nonskel_0[nonskel_0['race'] == 'white']
@@ -183,6 +206,28 @@ def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonz
                 'non-skeletonized_black': np.median(nonskel_0_black['0-318'])}
     
     return nonzero_dict
+
+def nonzero_pixel_check_during_training(data_loader):
+    black_non_zero = [0]
+    white_non_zero = [0]
+    
+    tmp = iter(data_loader)
+    num_iterations = len(data_loader.samples)
+
+    for i in tqdm(range(num_iterations)):
+        image, label = next(tmp)   
+        run_img = np.array(image)[:,:,0] # not sure where equal median number comes from? Ohh prob different/lower because normalizing.
+        num_nonzero = int(np.count_nonzero(run_img))
+
+        if label == 0:
+            black_non_zero = np.append(black_non_zero, num_nonzero)
+        elif label == 1:
+            white_non_zero = np.append(white_non_zero, num_nonzero)
+
+    black_non_zero = black_non_zero[1:]
+    white_non_zero = white_non_zero[1:]
+    
+    return (np.median(black_non_zero), np.median(white_non_zero))
 
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
@@ -348,8 +393,58 @@ def isolating_macula_mask(eye_tuple,
     
     return select_macula
 
-# lambda applied functions --------------------------------------------------------------------------------------------------------------
+def average_pixel_count_random_images(img_channel, median_number_of_pixels, # all images 224 x 224
+                    image_size = (224, 224)):
+    
+    # averaging count by removing low intensity pixels from white images
+    # number_of_pixels = nonzero_dict['nonskeletonized_white'] - nonzero_dict['nonskeletonized_black'] # skeleton images
+    # number_of_pixels = int(abs(number_of_pixels))
+    # nonzero dict contains information for 1 channel, so no division.
+    
+    num_nonzero_img = np.count_nonzero(img_channel) # num pixels in 1 channel
+    channel_flatten = np.array(img_channel.flatten())
+    
+    img_df = pd.DataFrame(index=range(len(channel_flatten)),columns=range(2))
+    img_df['img_pixels'] = channel_flatten
+    img_df.reset_index(inplace=True) # index colname      
+                          
+    pixels_to_modify = num_nonzero_img - median_number_of_pixels
+    
+     # add pixels, num_nonzero_img smaller
+       
+    img_df_zero = img_df[img_df['img_pixels'] == 0]
+    img_df_nonzero = img_df[img_df['img_pixels'] != 0] # we want to stratify for PIVs to add
+    test_size = abs(pixels_to_modify)/len(img_df_nonzero) 
+    
+    print(len(img_df_nonzero))
 
+    _, X_test, _, y_test = train_test_split(img_df_nonzero['img_pixels'], img_df_nonzero['index'], test_size = test_size, stratify = img_df_nonzero['img_pixels'], random_state = 42)
+       
+        # X_test has img_pixel values that I need to add
+      
+    if pixels_to_modify <= 0: # if equal to 0 nothing will happen
+        for i in range(pixels_to_modify): # sanity check       
+            img_df_zero[i] = X_test[i] # then we'll append + sort 
+    
+    elif pixels_to_modify > 0:
+        
+        print(len(y_test), pixels_to_modify)
+        assert len(y_test) == pixels_to_modify
+        for i in range(len(y_test)): # 
+            img_df_nonzero.loc[img_df_nonzero['index'] == y_test_i, 'img_pixels'] = 0   
+                        
+        concat_df = pd.concat([img_df_nonzero, img_df_zero]) # should be no duplicate index values
+        concat_df = concat_df.sort_values(by='index', ascending=True)
+        
+        assert len(concat_df) == len(img_df)
+        assert np.unique(concat_df['index']) == len(concat_df)
+        
+    img_flatten2 = concat_df['img_pixels']
+    reshapen_img = img_flatten2.reshape(image_size)
+    
+    return reshapen_img    
+
+# lambda applied functions --------------------------------------------------------------------------------------------------------------
 def average_pixel_count(img, img_race, number_of_pixels, # all images 224 x 224
                     image_size = (224, 224)):
     
@@ -446,8 +541,10 @@ def systemic_brightening(img, skeleton, thresh_type, intensity_change, brighten_
     return final_img
                          
 
-def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple brighten_sums
+def randomly_distribute(img, skeleton, average_nonzero_pixels, median_number_of_pixels, brighten_sum, # can try with multiple brighten_sums
                        none_thresh = 0, image_size = (224, 224)): # getting rid of the complete black
+    
+    # for number of pixels we use non_skeletonized full_set + train/test/val sets.
     
     # sticking with none_thresh = 0 for now, brightening everything except the background. 
     # could try some thresholding on which pixels we brighten, or thresholding by zeroing some pixels.
@@ -459,10 +556,17 @@ def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple bri
     flattened_img = modified_img.flatten()
     random_img = np.random.permutation(flattened_img)
     modified_img2 = np.reshape(random_img, image_size)
+    
+    # averaging nonzero pixels
+    if average_nonzero_pixels:
+        modified_img3 = average_pixel_count_random_images(modified_img2, median_number_of_pixels)
+    elif not average_nonzero_pixels:
+        modified_img3 = modified_img2
         
     # now for brightening code, will be brightening ALL pixels above 0/20? (above 0, brightening everything)
-    modified_img3 = apply_threshold(modified_img2, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default
     
+    modified_img4 = apply_threshold(modified_img3, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default
+      
     final_img = substitute_channels(img, modified_img3)
 
     return final_img
