@@ -470,7 +470,7 @@ def make_removed_components_mask(limit_reached, number_vessels, vessel_remainder
 
     return final_mask     
 
-def get_nonzero_zero_pixel_locations(channel_flatten, median_number_of_pixels,
+def get_nonzero_zero_pixel_locations(channel_flatten,
                                     image_size = (224, 224)):
     # array of nonzero and zero id locations
     nonzero_pixels = []
@@ -501,17 +501,28 @@ def average_pixel_count_random_images(img_channel, median_number_of_pixels, # al
     num_nonzero_img = np.count_nonzero(img_channel) # num pixels in 1 channel
     pixels_to_modify = num_nonzero_img - median_number_of_pixels
     
-    nonzero_pixels, zero_pixels = get_nonzero_zero_pixel_locations(channel_flatten, median_number_of_pixels)
+    nonzero_pixels, zero_pixels = get_nonzero_zero_pixel_locations(channel_flatten)
+    
+    modified_channel_flatten = np.copy(channel_flatten)
        
     if pixels_to_modify > 0: # remove pixels
         num_pixels_remove = pixels_to_modify # should be positive
-        indexes = np.random.choice(len(nonzero_pixels), num_pixels_remove, replace=False)
+        
+        # print(f"modified_pixels: {num_pixels_remove} , nonzero_pixels: {len(nonzero_pixels)}")
+        
+        # replace = False because we can ONLY zero an index value once --- once zero, can't really zero again
+        indexes = np.random.choice(len(nonzero_pixels), num_pixels_remove, replace=False) 
         remove_pixel_indexes = nonzero_pixels[indexes]
         modified_channel_flatten[remove_pixel_indexes] = 0
     
     elif pixels_to_modify <= 0: # add pixels
         num_pixels_add = abs(pixels_to_modify)
-        nonzero_indexes = np.random.choice(len(nonzero_pixels), num_pixels_add, replace=False)
+        
+        # print(f"modified_pixels: {num_pixels_add} , nonzero_pixels: {len(nonzero_pixels)} , zero_pixels: {len(zero_pixels)}")  
+        
+        nonzero_indexes = np.random.choice(len(nonzero_pixels), num_pixels_add, replace=True)
+        
+        # need unique zero indexes (we got these :D)
         zero_indexes = np.random.choice(len(zero_pixels), num_pixels_add, replace=False)
         
         substituted_pixel_indexes = nonzero_pixels[nonzero_indexes]
