@@ -411,57 +411,6 @@ def isolating_macula_mask(eye_tuple,
     
     return select_macula
 
-def average_pixel_count_random_images(img_channel, median_number_of_pixels, # all images 224 x 224
-                    image_size = (224, 224)):
-    
-    # averaging count by removing low intensity pixels from white images
-    # number_of_pixels = nonzero_dict['nonskeletonized_white'] - nonzero_dict['nonskeletonized_black'] # skeleton images
-    # number_of_pixels = int(abs(number_of_pixels))
-    # nonzero dict contains information for 1 channel, so no division.
-    
-    num_nonzero_img = np.count_nonzero(img_channel) # num pixels in 1 channel
-    channel_flatten = np.array(img_channel.flatten())
-    
-    img_df = pd.DataFrame(index=range(len(channel_flatten)),columns=range(2))
-    img_df['img_pixels'] = channel_flatten
-    img_df.reset_index(inplace=True) # index colname      
-                          
-    pixels_to_modify = num_nonzero_img - median_number_of_pixels
-    
-     # add pixels, num_nonzero_img smaller
-       
-    img_df_zero = img_df[img_df['img_pixels'] == 0]
-    img_df_nonzero = img_df[img_df['img_pixels'] != 0] # we want to stratify for PIVs to add
-    test_size = abs(pixels_to_modify)/len(img_df_nonzero) 
-    
-    print(len(img_df_nonzero))
-
-    _, X_test, _, y_test = train_test_split(img_df_nonzero['img_pixels'], img_df_nonzero['index'], test_size = test_size, stratify = img_df_nonzero['img_pixels'], random_state = 42)
-       
-        # X_test has img_pixel values that I need to add
-      
-    if pixels_to_modify <= 0: # if equal to 0 nothing will happen
-        for i in range(pixels_to_modify): # sanity check       
-            img_df_zero[i] = X_test[i] # then we'll append + sort 
-    
-    elif pixels_to_modify > 0:
-        
-        print(len(y_test), pixels_to_modify)
-        assert len(y_test) == pixels_to_modify
-        for i in range(len(y_test)): # 
-            img_df_nonzero.loc[img_df_nonzero['index'] == y_test_i, 'img_pixels'] = 0   
-                        
-        concat_df = pd.concat([img_df_nonzero, img_df_zero]) # should be no duplicate index values
-        concat_df = concat_df.sort_values(by='index', ascending=True)
-        
-        assert len(concat_df) == len(img_df)
-        assert np.unique(concat_df['index']) == len(concat_df)
-        
-    img_flatten2 = concat_df['img_pixels']
-    reshapen_img = img_flatten2.reshape(image_size)
-    
-    return reshapen_img    
-
 def determine_image_info(number_of_pixels, area_sorted_dict):
     remaining_pixels = number_of_pixels
     
@@ -520,6 +469,59 @@ def make_removed_components_mask(limit_reached, number_vessels, vessel_remainder
     final_mask = mask
 
     return final_mask     
+
+def get_nonzero_zero_pixel_locations(channel_flatten, median_number_of_pixels,
+                                    image_size = (224, 224)):
+    # array of nonzero and zero id locations
+    nonzero_pixels = []
+    zero_pixels = []
+    
+    for i in range(0, len(channel_flatten)):
+        if channel_flatten[i] == 0:
+            zero_pixels.append(i) # index value
+        elif channel_flatten[i] != 0:
+            nonzero_pixels.append(i)
+    
+    zero_pixels = np.array(zero_pixels)
+    nonzero_pixels = np.array(nonzero_pixels)
+                    
+    assert(len(nonzero_pixels) + len(zero_pixels) == len(channel_flatten))
+    
+    return nonzero_pixels, zero_pixels
+
+def average_pixel_count_random_images(img_channel, median_number_of_pixels, # all images 224 x 224
+                    image_size = (224, 224)):
+    
+    # random selection of removal/add means that relatively proportionate amount / pixel intensity is being added
+    # since PIV values more present have higher chance of being selected
+    
+    channel_flatten = np.copy(np.array(img_channel.flatten())) 
+    assert (len(channel_flatten) == image_size[0] * image_size[1])
+    
+    num_nonzero_img = np.count_nonzero(img_channel) # num pixels in 1 channel
+    pixels_to_modify = num_nonzero_img - median_number_of_pixels
+    
+    nonzero_pixels, zero_pixels = get_nonzero_zero_pixel_locations(channel_flatten, median_number_of_pixels)
+       
+    if pixels_to_modify > 0: # remove pixels
+        num_pixels_remove = pixels_to_modify # should be positive
+        indexes = np.random.choice(len(nonzero_pixels), num_pixels_remove, replace=False)
+        remove_pixel_indexes = nonzero_pixels[indexes]
+        modified_channel_flatten[remove_pixel_indexes] = 0
+    
+    elif pixels_to_modify <= 0: # add pixels
+        num_pixels_add = abs(pixels_to_modify)
+        nonzero_indexes = np.random.choice(len(nonzero_pixels), num_pixels_add, replace=False)
+        zero_indexes = np.random.choice(len(zero_pixels), num_pixels_add, replace=False)
+        
+        substituted_pixel_indexes = nonzero_pixels[nonzero_indexes]
+        zero_pixel_indexes = zero_pixels[zero_indexes]
+        
+        modified_channel_flatten[zero_pixel_indexes] = channel_flatten[substituted_pixel_indexes]
+    
+    reshapen_img = modified_channel_flatten.reshape(image_size)
+    
+    return reshapen_img  
 
 # lambda applied functions --------------------------------------------------------------------------------------------------------------
 def average_nonzero_pixels_with_vessels(img, img_race, number_of_pixels, connectivity,
