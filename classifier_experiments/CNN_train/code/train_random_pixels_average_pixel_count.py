@@ -26,6 +26,8 @@ import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 
+from utils_train import make_nonzero_dict, randomly_distribute
+
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
 
@@ -51,9 +53,9 @@ def train(data_dir, experiment_name, set_name, brighten_sum, average_nonzero_pix
     if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
         
-        f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.csv'
+    f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.pt'
+    f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.json'
+    csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.csv'
         
     if set_name == "train_test_val_set":
         nonzero_dict_train = make_nonzero_dict('train')
@@ -115,13 +117,15 @@ def train(data_dir, experiment_name, set_name, brighten_sum, average_nonzero_pix
     
     print ("Checking Nonzero Pixel Counts")
     
-    train_tuple = nonzero_pixel_check_during_training(train_dataset)
-    val_tuple = nonzero_pixel_check_during_training(val_dataset)
-    test_tuple = nonzero_pixel_check_during_training(test_dataset)
+#     train_tuple = nonzero_pixel_check_during_training(train_dataset)
+#     val_tuple = nonzero_pixel_check_during_training(val_dataset)
+#     test_tuple = nonzero_pixel_check_during_training(test_dataset)
 
     print()
     print(f'Data Directory: {data_dir}')
     print(f'Skeletonize: {skeleton}')
+    print(f'Set Name: {set_name}')
+    print(f'Nonzero Pixel Counts (Train, Test, Val): {number_of_pixels_train, number_of_pixels_test, number_of_pixels_val}')
     print(f'Brightened by: {brighten_sum} px')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
@@ -203,7 +207,7 @@ if __name__ == '__main__':
     # set: full set
     
     # brightening increase
-    train(data_dir, experiment_name, 'full_set', 0)
+    # alreay done train(data_dir, experiment_name, 'full_set', 0)
     train(data_dir, experiment_name, 'full_set', 20)
     train(data_dir, experiment_name, 'full_set', 40)
     train(data_dir, experiment_name, 'full_set', 60)

@@ -681,7 +681,7 @@ def randomly_distribute(img, skeleton, average_nonzero_pixels, median_number_of_
     
     modified_img4 = apply_threshold(modified_img3, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default
       
-    final_img = substitute_channels(img, modified_img3)
+    final_img = substitute_channels(img, modified_img4)
 
     return final_img
 
