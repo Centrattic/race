@@ -1,5 +1,5 @@
-x = imread('C:/Users/jay_p/Downloads/30672.bmp');
-segNew = logical(x > 128);
+x = imread('30672.bmp');
+segNew = logical(x > 128); % thresholding
 
 tempGraph = segNew;
 
@@ -14,7 +14,7 @@ graphPaths = {};
 for num_pixels_idx = 1:length(numPixels)
     if numPixels(num_pixels_idx) > 1
         skelIm = bwmorph(logical(tempGraph),'skel',Inf);
-        bridgedIm = bwmorph(skelIm,'bridge');
+        bridgedIm = bwmorph(skelIm,'bridge'); % bridge unconnected pixels
         skelImFinal = bwmorph(logical(bridgedIm),'skel',Inf);
         for temp_idx = 1:length(numPixels)
             if temp_idx ~= num_pixels_idx

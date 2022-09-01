@@ -24,10 +24,15 @@ from tensorflow import keras
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
+import warnings
+
 from tqdm import tqdm
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
+
+# bye bye
+warnings.filterwarnings("ignore")
 
 # model definitions
 
@@ -122,8 +127,8 @@ def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple bri
 def train(data_dir, brighten_sum, experiment_name, skeleton=False,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
-    if device == 'cuda:1': # using all available gpus
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
+    if device == 'cuda:2': # using all available gpus
         torch.cuda.empty_cache()
     if skeleton is True: 
         f_params = f'./outputs/checkpoints/{experiment_name}/model_random_pixels_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.pt'
@@ -239,8 +244,8 @@ def train(data_dir, brighten_sum, experiment_name, skeleton=False,
 
 if __name__ == '__main__':
     
-    experiment_name = '#8(random_pixels)' # change depending on experiment
-    data_dir = os.path.join('dataset')
+    experiment_name = 'random_pixels_dataset_given'#8(random_pixels)' # change depending on experiment
+    data_dir = os.path.join('dataset_given')
     
     if not os.path.isdir(os.path.join('outputs', 'probabilities', experiment_name)):
         os.makedirs(os.path.join('outputs', 'probabilities', experiment_name))

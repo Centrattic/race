@@ -23,6 +23,7 @@ import tensorflow as tf
 from tensorflow import keras
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+import warnings
 
 from tqdm import tqdm
 
@@ -30,6 +31,8 @@ from utils_train import make_nonzero_dict, randomly_distribute
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
+
+warnings.filterwarnings("ignore")
 
 # model definitions
 
@@ -49,15 +52,15 @@ class PretrainedModel(nn.Module):
 def train(data_dir, experiment_name, set_name, brighten_sum, average_nonzero_pixels = True, skeleton=False,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
-    if device == 'cuda:1': # using all available gpus
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
+    if device == 'cuda:2': # using all available gpus
         torch.cuda.empty_cache()
         
     f_params = f'./outputs/checkpoints/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.pt'
     f_history = f'./outputs/histories/{experiment_name}/{set_name}_model_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.json'
     csv_name = f'./outputs/probabilities/{experiment_name}/{set_name}_random_pixels_brightened_by_{brighten_sum}_epoch{num_epochs}.csv'
         
-    if set_name == "train_test_val_set":
+    if set_name == "train_test_val_set": # no longer supporting - not going to use!
         nonzero_dict_train = make_nonzero_dict('train')
         nonzero_dict_test = make_nonzero_dict('test')
         nonzero_dict_val = make_nonzero_dict('val')
@@ -189,8 +192,8 @@ def train(data_dir, experiment_name, set_name, brighten_sum, average_nonzero_pix
 
 if __name__ == '__main__':
     
-    experiment_name = '#13(random_pixels_constant_pixel_count)' # change depending on experiment
-    data_dir = os.path.join('dataset_full')
+    experiment_name = 'given_dataset/#2(random_pixels_constant_pixel_count)' # change depending on experiment
+    data_dir = os.path.join('dataset_given')
     
     if not os.path.isdir(os.path.join('outputs', 'probabilities', experiment_name)):
         os.makedirs(os.path.join('outputs', 'probabilities', experiment_name))
@@ -207,10 +210,11 @@ if __name__ == '__main__':
     # set: full set
     
     # brightening increase
-    # alreay done train(data_dir, experiment_name, 'full_set', 0)
-    train(data_dir, experiment_name, 'full_set', 20)
-    train(data_dir, experiment_name, 'full_set', 40)
-    train(data_dir, experiment_name, 'full_set', 60)
-    train(data_dir, experiment_name, 'full_set', 80)
-    train(data_dir, experiment_name, 'full_set', 100)
+    # alreay done 
+    # train(data_dir, experiment_name, 'full_set', 0)
+    # train(data_dir, experiment_name, 'full_set', 20)
+    # train(data_dir, experiment_name, 'full_set', 40)
+    # train(data_dir, experiment_name, 'full_set', 60)
+    # train(data_dir, experiment_name, 'full_set', 80)
+    # train(data_dir, experiment_name, 'full_set', 100)
     train(data_dir, experiment_name, 'full_set', 120)

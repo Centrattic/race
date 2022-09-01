@@ -7,6 +7,16 @@ zeroInd = all(C1==0,2);
 C1(zeroInd,:) = [];
 
 %possible neighbors
+
+d = size(C1);
+d2 = size(currPoint);
+
+disp(d);
+disp('');
+
+disp(currPoint);
+disp(d2);
+
 neighborIndex = C1 + currPoint;
 zeroInd = any(neighborIndex<1,2) | any(neighborIndex(:,1)>size(tempGraph,1),2) | any(neighborIndex(:,2)>size(tempGraph,2),2);
 neighborIndex(zeroInd,:) = [];

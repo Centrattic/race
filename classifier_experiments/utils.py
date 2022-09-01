@@ -9,6 +9,7 @@ from PIL import Image
 import cv2
 import re
 import glob
+import random
 
 from skorch import NeuralNetClassifier
 from skorch.callbacks import LRScheduler, Checkpoint, EpochScoring, EarlyStopping
@@ -29,6 +30,18 @@ import matplotlib.pyplot as plt
 from sklearn import metrics
 from tqdm import tqdm
 
+
+class PretrainedModel(nn.Module):
+    def __init__(self, output_features):
+        super().__init__()
+        model = models.resnet18(pretrained=True)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, output_features)
+        self.model = model
+
+    def forward(self, x):
+        return self.model(x)
+
 # beginner functions ---------------------------------------------------------------------------------------------------------
 
 def get_colvalue_from_id(img_id, image_data, colname):
@@ -40,9 +53,12 @@ def get_colvalue_from_id(img_id, image_data, colname):
 
 def channeled_image_from_id(img_path, path_name, image_size): # will reshape to 3 channels! careful!
     arr = np.array(Image.open(img_path + path_name))
-    resized = cv2.resize(arr, image_size)
+    # print(arr.shape)
+    resized = cv2.resize(arr, (image_size[1], image_size[0])) # cv2.resize takes (width, height), which is (640, 480)!!
+    # print(resized.shape)
     channels = np.repeat(resized[:, :, np.newaxis], 3, axis=2).reshape((image_size[0], image_size[1],3))
-    
+    # print(channels.shape)
+
     return channels
 
 def count_nonzero(img, threshold):
@@ -118,13 +134,15 @@ def apply_threshold(image, operation, none_thresh, increment, thresh_type = 'bel
 
 def substitute_channels(img, substitute):
     
-    img[:,:,0] = substitute
-    img[:,:,1] = substitute
-    img[:,:,2] = substitute
+    img_copy = np.copy(img)
     
-    img = Image.fromarray(img)
+    img_copy[:,:,0] = substitute
+    img_copy[:,:,1] = substitute
+    img_copy[:,:,2] = substitute
     
-    return img
+    img_copy = Image.fromarray(img_copy)
+    
+    return img_copy
 
 
 def image_center_from_id(QA_csv, img_id, img_size):
@@ -161,9 +179,33 @@ def load_eye_key_csv(eye_key_csv = "/users/riya/race/csv/image_eye_key.csv",
     
     return eye_info_csv
 
-def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
-    nonskel_0 = pd.read_csv(preds_path + 'nonskeletonized_nonzero_count_above_0.csv')
-    skel_0 = pd.read_csv(preds_path + 'skeletonized_nonzero_count_above_0.csv')
+def make_nonzero_dict(set_name, preds_path = "/users/riya/race/classifier_experiments/nonzero_count/"):
+    
+    # all these refer to nonzero values for radiuses that include the whole image, not sections of the image
+    
+    if set_name == 'train':
+        nonskel_name = 'train_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'train_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'test':
+        nonskel_name = 'test_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'test_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'val':
+        nonskel_name = 'val_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'val_set_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'optic_disk_set':
+        nonskel_name = 'final_nonskeletonized_nonzero_count_above_0.csv' # this file does not exist
+        skel_name = 'final_skeletonized_nonzero_count_above_0.csv'
+    
+    if set_name == 'full_set':
+        nonskel_name = 'full_set_nonskeletonized_nonzero_count_above_0.csv'
+        skel_name = 'full_set_skeletonized_nonzero_count_above_0.csv'
+        
+    nonskel_0 = pd.read_csv(preds_path + nonskel_name) # bad. probably wrong
+    skel_0 = pd.read_csv(preds_path + skel_name) 
+    # new version appears correct (with all 3181 train set images))
     
     nonskel_0_white = nonskel_0[nonskel_0['race'] == 'white']
     nonskel_0_black = nonskel_0[nonskel_0['race'] == 'black']
@@ -173,30 +215,68 @@ def make_nonzero_dict(preds_path = "/users/riya/race/classifier_experiments/nonz
     
     # will use median for now. can change to mean if significant.
     
-    nonzero_dict = {'skeletonized_white': np.median(skel_0_white['0-159']),
-                'skeletonized_black': np.median(skel_0_black['0-159']),
-                'non-skeletonized_white': np.median(nonskel_0_white['0-159']),
-                'non-skeletonized_black': np.median(nonskel_0_black['0-159'])}
+    nonzero_dict = {'skeletonized_white': np.median(skel_0_white['0-318']),
+                'skeletonized_black': np.median(skel_0_black['0-318']),
+                'non-skeletonized_white': np.median(nonskel_0_white['0-318']),
+                'non-skeletonized_black': np.median(nonskel_0_black['0-318'])}
     
     return nonzero_dict
 
+def nonzero_pixel_check_during_training(data_loader):
+    black_non_zero = [0]
+    white_non_zero = [0]
+    
+    tmp = iter(data_loader)
+    num_iterations = len(data_loader.samples)
+
+    for i in tqdm(range(num_iterations)):
+        image, label = next(tmp)   
+        run_img = np.array(image)[:,:,0] # not sure where equal median number comes from? Ohh prob different/lower because normalizing.
+        num_nonzero = int(np.count_nonzero(run_img))
+
+        if label == 0:
+            black_non_zero = np.append(black_non_zero, num_nonzero)
+        elif label == 1:
+            white_non_zero = np.append(white_non_zero, num_nonzero)
+
+    black_non_zero = black_non_zero[1:]
+    white_non_zero = white_non_zero[1:]
+    
+    return (np.median(black_non_zero), np.median(white_non_zero))
+
+def make_area_sorted_dict(numLabels, stats):
+
+    area_info = [0] * numLabels
+    area_sorted_dict = {}
+    
+    for i in range(0, numLabels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        area_info[i] = area
+    
+    area_dict = dict(pd.value_counts(area_info)) 
+    for key in sorted(area_dict.keys()):
+        area_sorted_dict[key] = area_dict[key]
+    
+    return area_sorted_dict
+
 # medium functions --------------------------------------------------------------------------------------------------------------------
 
-def checksum(data_csv, data_path = "/users/riya/race/dataset/segmentations/"):
+def checksum(data_csv_path, data_path = "/users/riya/race/dataset/segmentations/"): # images with equal checksums are VERY close duplicates
     
-    # Turns out that around 31 of the images are actual duplicates! I looked at 10 and saw that they were 
-    # (or VERY close to duplicates), with difference image having very few nonzero pixels
-    # Checksum is getting the best of it, then.
+    # done with images in original shape of (480, 640, 1)
+    
+    data_csv = pd.read_csv(data_csv_path)
     
     checksum_arr = []
     id_arr = []
 
     # optic_csv_path = "../../optic_disk/DeepROP/quality_assurance/QA.csv"
-
     # returns only images with optics disks
 
     for i in tqdm(data_csv['image_id']):
         img_compare = np.array(Image.open(data_path + str(i) + '.bmp'))
+        
+        # print (img_compare.shape)
         all_sum = np.concatenate(img_compare).sum()
         col_sum = img_compare[:,100:240].sum()
         
@@ -256,6 +336,23 @@ def determine_image_center(img, img_size, QA_csv, checksum_dict): # using optic 
     
     return disk_center
 
+def determine_image_race(img, race_data, checksum_dict): # using optic disk
+    
+    id_og = '' # original id of image, for comparison
+    
+    img_og = np.array(img) 
+    img_og = img_og[:,:,0] # our original image, of size (480, 640, 1)
+    
+    # print (img_og.shape)
+    
+    checksum_og = np.concatenate(img_og).sum() + img_og[:,100:240].sum()
+    
+    id_og = list(checksum_dict.keys())[list(checksum_dict.values()).index(checksum_og)] # finding id for which checksum_og matches
+        
+    img_race = get_colvalue_from_id(id_og, race_data, 'race')
+   
+    return img_race
+
 
 # These region masks create center masks (center hidden), which can then be inverted to make back masks easily.
 
@@ -267,7 +364,8 @@ def ring_region_mask(disk_center, ring_radiuses, # region will be radius (0, ..r
     # large black circle on outside
     cv2.circle(center_mask, disk_center, ring_radiuses[1], (0, 0, 0), -1)
     # smaller white circle on inside
-    if ring_radiuses[0] > 0:
+    
+    if ring_radiuses[0] > 0: # center hidden aah!
         cv2.circle(center_mask, disk_center, ring_radiuses[0], (255, 255, 255), -1)
     
     return center_mask
@@ -325,41 +423,193 @@ def isolating_macula_mask(eye_tuple,
     
     return select_macula
 
-# lambda applied functions --------------------------------------------------------------------------------------------------------------
+def determine_image_info(number_of_pixels, area_sorted_dict):
+    remaining_pixels = number_of_pixels
+    
+    for i in area_sorted_dict.keys(): # keys in the right sort order
+        included_pixels = area_sorted_dict[i] * i 
+        remaining_pixels -= included_pixels
+            
+        if remaining_pixels < 0: # we've reached our i limit
+            limit_reached = i
+            modulus_pixels = remaining_pixels + included_pixels
+            number_vessels = int(np.floor(modulus_pixels/limit_reached))
+            vessel_remainder = (modulus_pixels % limit_reached) # remainder, shld be int
+            return limit_reached, number_vessels, vessel_remainder # return vs. the break (for loop indent)
+        
+def make_removed_components_mask(limit_reached, number_vessels, vessel_remainder, number_of_pixels, 
+                                 numLabels, labels, stats): # exists per image 
+    counter = 0
+    mask = np.zeros((224, 224)).astype("uint8")
+    randint_arr = [0.5] * numLabels # cause there'll never be a decimal label
+    test_arr = [0]
+    
+    for i in range(0, numLabels): # not accounting for vessel fraction just yet
+        
+        img_index = 0.5
+        while img_index in randint_arr: # will always be at first
+            img_index = random.randint(0, numLabels-1) # retry man
+        
+        randint_arr[i] = img_index
+ 
+        # above is inefficient code!
+        
+        area = stats[img_index, cv2.CC_STAT_AREA]
+        
+        if area < limit_reached:
+            componentMask = (labels == img_index).astype("uint8") * 255
+            mask = cv2.bitwise_or(mask, componentMask)
 
-def average_pixel_count(img, nonzero_dict, # all images 224 x 224
+        elif area == limit_reached:
+            if counter < number_vessels:
+                test_arr = np.append(test_arr, img_index)
+                componentMask = (labels == img_index).astype("uint8") * 255
+                mask = cv2.bitwise_or(mask, componentMask)
+                counter+=1
+            # only happen when all limit reached vessels are gone. 
+            # Then adding to counter, so vessel remainder happens only once
+            elif counter == number_vessels:
+                componentMask = (labels == img_index).astype("uint8") * 255
+                num_pixels_remove = np.count_nonzero(componentMask) - vessel_remainder    
+                a,b = np.nonzero(componentMask) # getting arrays of (a,b) nonzero indices
+                index = np.random.choice(len(a), num_pixels_remove, replace=False)
+                componentMask[a[index], b[index]] = 0
+                mask = cv2.bitwise_or(mask, componentMask)
+                
+                counter+=1; # out of this elif
+                
+    final_mask = mask
+
+    return final_mask     
+
+def get_nonzero_zero_pixel_locations(channel_flatten,
+                                    image_size = (224, 224)):
+    # array of nonzero and zero id locations
+    nonzero_pixels = []
+    zero_pixels = []
+    
+    for i in range(0, len(channel_flatten)):
+        if channel_flatten[i] == 0:
+            zero_pixels.append(i) # index value
+        elif channel_flatten[i] != 0:
+            nonzero_pixels.append(i)
+    
+    zero_pixels = np.array(zero_pixels)
+    nonzero_pixels = np.array(nonzero_pixels)
+                    
+    assert(len(nonzero_pixels) + len(zero_pixels) == len(channel_flatten))
+    
+    return nonzero_pixels, zero_pixels
+
+def average_pixel_count_random_images(img_channel, median_number_of_pixels, # all images 224 x 224
+                    image_size = (224, 224)):
+    
+    # random selection of removal/add means that relatively proportionate amount / pixel intensity is being added
+    # since PIV values more present have higher chance of being selected
+    
+    channel_flatten = np.copy(np.array(img_channel.flatten())) 
+    assert (len(channel_flatten) == image_size[0] * image_size[1])
+    
+    num_nonzero_img = np.count_nonzero(img_channel) # num pixels in 1 channel
+    pixels_to_modify = num_nonzero_img - median_number_of_pixels
+    
+    nonzero_pixels, zero_pixels = get_nonzero_zero_pixel_locations(channel_flatten)
+    
+    modified_channel_flatten = np.copy(channel_flatten)
+       
+    if pixels_to_modify > 0: # remove pixels
+        num_pixels_remove = pixels_to_modify # should be positive
+        
+        # print(f"modified_pixels: {num_pixels_remove} , nonzero_pixels: {len(nonzero_pixels)}")
+        
+        # replace = False because we can ONLY zero an index value once --- once zero, can't really zero again
+        indexes = np.random.choice(len(nonzero_pixels), num_pixels_remove, replace=False) 
+        remove_pixel_indexes = nonzero_pixels[indexes]
+        modified_channel_flatten[remove_pixel_indexes] = 0
+    
+    elif pixels_to_modify <= 0: # add pixels
+        num_pixels_add = abs(pixels_to_modify)
+        
+        # print(f"modified_pixels: {num_pixels_add} , nonzero_pixels: {len(nonzero_pixels)} , zero_pixels: {len(zero_pixels)}")  
+        
+        nonzero_indexes = np.random.choice(len(nonzero_pixels), num_pixels_add, replace=True)
+        
+        # need unique zero indexes (we got these :D)
+        zero_indexes = np.random.choice(len(zero_pixels), num_pixels_add, replace=False)
+        
+        substituted_pixel_indexes = nonzero_pixels[nonzero_indexes]
+        zero_pixel_indexes = zero_pixels[zero_indexes]
+        
+        modified_channel_flatten[zero_pixel_indexes] = channel_flatten[substituted_pixel_indexes]
+    
+    reshapen_img = modified_channel_flatten.reshape(image_size)
+    
+    return reshapen_img  
+
+# lambda applied functions --------------------------------------------------------------------------------------------------------------
+def average_nonzero_pixels_with_vessels(img, img_race, number_of_pixels, connectivity,
+                                       image_size = (224, 224)):
+    img_resize, img_channel, img_skel_channel = process_skeletonize(img, True, image_size) # (224, 224)   
+    
+    if img_race == 'white':
+        numLabels, labels, stats, centroids = cv2.connectedComponentsWithStats(img_skel_channel, 
+                                                                               cv2.CV_32S, connectivity=connectivity)
+
+        area_sorted_dict = make_area_sorted_dict(numLabels, stats)
+        limit_reached, number_vessels, vessel_remainder = determine_image_info(number_of_pixels, area_sorted_dict)
+        final_mask = make_removed_components_mask(limit_reached, number_vessels, vessel_remainder, 
+                                                  number_of_pixels, numLabels, labels, stats)
+        modified_channel = img_skel_channel - final_mask
+
+    elif img_race == 'black':
+        modified_channel = img_skel_channel # no change
+        
+    # print(np.count_nonzero(img_skel_channel), np.count_nonzero(modified_channel))
+    final_img = substitute_channels(img_resize, modified_channel)
+
+    # print(np.count_nonzero(img_channel), np.count_nonzero(img_skel_channel) * 3, np.count_nonzero(final_img))
+    
+    return final_img
+
+def average_pixel_count(img, img_race, number_of_pixels, # all images 224 x 224
                     image_size = (224, 224)):
     
     # averaging count by removing low intensity pixels from white images
-    
-    number_of_pixels = int(abs(nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'])) # skeleton images
+    # number_of_pixels = nonzero_dict['skeletonized_white'] - nonzero_dict['skeletonized_black'] # skeleton images
+    # number_of_pixels = int(abs(number_of_pixels))
+    # nonzero dict contains information for 1 channel, so no division.
 
     img, channel, modified_channel = process_skeletonize(img, True, image_size) # yes skeletonize ALWAYS
 
-    pixel_dict = dict(enumerate(channel.flatten(), 1)) # chooses one channel, they will be duplicated
-    pixel_dict = {key - 1:val for key, val in pixel_dict.items() if val != 0}
-    
-    sorted_dict = {}
-    sorted_keys = sorted(pixel_dict, key = pixel_dict.get)
-    for w in sorted_keys:
-        sorted_dict[w] = pixel_dict[w]
-      
-    # skeletonize img
-    img_flatten = channel.flatten()
-    skeleton_img_flatten = modified_channel.flatten()
-    
-    i = 0
-    
-    for key, value in sorted_dict.items(): # should go in sorted order, from min to max PIV
-        assert img_flatten[key] == value # sanity check
-        if i < number_of_pixels: # not <= 
-            if skeleton_img_flatten[key] != 0: # pixel hasn't been removed in skeletonization
-                skeleton_img_flatten[key] = 0 # for white images, removing pixels
-                i+=1
-    
-    skeleton_channel = skeleton_img_flatten.reshape(image_size)
-    final_img = substitute_channels(img, skeleton_channel)
+    if img_race == 'white':
+        pixel_dict = dict(enumerate(channel.flatten(), 1)) # chooses one channel, they will be duplicated
+        pixel_dict = {key - 1:val for key, val in pixel_dict.items() if val != 0}
 
+        sorted_dict = {}
+        sorted_keys = sorted(pixel_dict, key = pixel_dict.get)
+        for w in sorted_keys:
+            sorted_dict[w] = pixel_dict[w]
+
+        # skeletonize img
+        img_flatten = channel.flatten()
+        skeleton_img_flatten = modified_channel.flatten()
+
+        i = 0
+
+        for key, value in sorted_dict.items(): # should go in sorted order, from min to max PIV
+            assert img_flatten[key] == value # sanity check
+            if i < number_of_pixels: # not <= 
+                if skeleton_img_flatten[key] != 0: # pixel hasn't been removed in skeletonization
+                    skeleton_img_flatten[key] = 0 # for white images, removing pixels
+                    i+=1
+
+        skeleton_channel = skeleton_img_flatten.reshape(image_size)
+    
+    elif img_race == 'black':
+        skeleton_channel = modified_channel
+
+    final_img = substitute_channels(img, skeleton_channel)
+    
     return final_img    
     
 
@@ -417,8 +667,10 @@ def systemic_brightening(img, skeleton, thresh_type, intensity_change, brighten_
     return final_img
                          
 
-def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple brighten_sums
+def randomly_distribute(img, skeleton, average_nonzero_pixels, median_number_of_pixels, brighten_sum, # can try with multiple brighten_sums
                        none_thresh = 0, image_size = (224, 224)): # getting rid of the complete black
+    
+    # for number of pixels we use non_skeletonized full_set + train/test/val sets.
     
     # sticking with none_thresh = 0 for now, brightening everything except the background. 
     # could try some thresholding on which pixels we brighten, or thresholding by zeroing some pixels.
@@ -430,11 +682,18 @@ def randomly_distribute(img, skeleton, brighten_sum, # can try with multiple bri
     flattened_img = modified_img.flatten()
     random_img = np.random.permutation(flattened_img)
     modified_img2 = np.reshape(random_img, image_size)
+    
+    # averaging nonzero pixels
+    if average_nonzero_pixels:
+        modified_img3 = average_pixel_count_random_images(modified_img2, median_number_of_pixels)
+    elif not average_nonzero_pixels:
+        modified_img3 = modified_img2
         
     # now for brightening code, will be brightening ALL pixels above 0/20? (above 0, brightening everything)
-    modified_img3 = apply_threshold(modified_img2, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default
     
-    final_img = substitute_channels(img, modified_img3)
+    modified_img4 = apply_threshold(modified_img3, 'add', none_thresh, brighten_sum, thresh_type = 'below') # yay default
+      
+    final_img = substitute_channels(img, modified_img4)
 
     return final_img
 

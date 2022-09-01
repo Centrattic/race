@@ -26,7 +26,6 @@ import matplotlib.pyplot as plt
 import warnings
 
 from tqdm import tqdm
-from utils_train import macula_focus, load_eye_key_csv, checksum, load_QA_csv, determine_image_side_view
 
 # set directory
 os.chdir("/users/riya/race/classifier_experiments/CNN_train")
@@ -45,36 +44,52 @@ class PretrainedModel(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+    
+    
+def skeletonize_images(img, skeleton, # the channel here was weird for half_skeletonize but didn't appear a training issue???
+                image_size): # (224, 224) typically
+    img = np.copy(img)
+    img = np.array(img)
+    
+    img = cv2.resize(img, image_size)
+    
+    # defining channel which will be duplicated later (in case it's not already with Image Folder??)
+    channel = img[:,:,0]
+    
+    if skeleton is True:
+        # thresholding (removing these pixels) can be done with this line
+        # skeleton_channel[skeleton_channel < 20] = 0   
+        skeleton_channel = np.copy(channel)
+        skeleton_channel[skeleton_channel > 0] = 255       
+        modified_img = skeletonize(skeleton_channel, method='lee')
+    
+    elif skeleton is not True:
+        modified_img = channel
+    
+    img_copy = np.copy(img) # original tri channeled
+    
+    img_copy[:,:,0] = modified_img
+    img_copy[:,:,1] = modified_img
+    img_copy[:,:,2] = modified_img
+    
+    img_copy = Image.fromarray(img_copy)
+    
+    return img_copy
 
-# train code, modify for half-skeletonize with new addition.
 
-def train(data_dir, skeleton, brighten_sum, region, experiment_name,
+def train(data_dir, experiment_name, skeleton,
           num_classes=2, batch_size=64, num_epochs=50, lr=0.001, image_size = (224, 224)): # 50 epochs for optimal performance
     
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") # just this once using gpu1 on train0, bc 0 used.
-    if device == 'cuda:2': # using all available gpus
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") # 
+    if device == 'cuda:1': # using all available gpus
         torch.cuda.empty_cache()
-        
-    # skeleton_radiuses gives region within which to skeletonize    
-    if skeleton == True:
-        f_params = f'./outputs/checkpoints/{experiment_name}/model_{region}_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/{experiment_name}/model_{region}_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/{experiment_name}/{region}_brightened_by_{brighten_sum}_skeletonized_epoch{num_epochs}.csv'
-    elif skeleton == False:
-        f_params = f'./outputs/checkpoints/{experiment_name}/model_{region}_brightened_by_{brighten_sum}_epoch{num_epochs}.pt'
-        f_history = f'./outputs/histories/{experiment_name}/model_{region}_brightened_by_{brighten_sum}_epoch{num_epochs}.json'
-        csv_name = f'./outputs/probabilities/{experiment_name}/{region}_brightened_by_{brighten_sum}_epoch{num_epochs}.csv'
-        
-    # fix these transforms w/ new optic disk. Done!
+
+    f_params = f'./outputs/checkpoints/{experiment_name}/model_skeleton_{skeleton}.pt'
+    f_history = f'./outputs/histories/{experiment_name}/model_skeleton_{skeleton}.json'
+    csv_name = f'./outputs/probabilities/{experiment_name}/model_skeleton_{skeleton}.csv'
     
-    eye_save_path = "/users/riya/race/csv/image_eye_data_pruned.csv"
-    
-    eye_save_csv = load_eye_key_csv()
-    eye_save_csv.to_csv(eye_save_path)
-    
-    eye_csv, checksum_dict = checksum(eye_save_path)
-    
-    train_transforms = transforms.Compose([transforms.Lambda(lambda img: macula_focus(img, skeleton, determine_image_side_view(img, eye_csv, checksum_dict), brighten_sum, region)), # image size pre-defined
+    train_transforms = transforms.Compose([transforms.Lambda
+                                      (lambda img: skeletonize_images(img, skeleton, image_size)), 
                                            # transforms.Resize(image_size),
                                            transforms.RandomHorizontalFlip(),
                                            transforms.RandomVerticalFlip(),
@@ -83,7 +98,8 @@ def train(data_dir, skeleton, brighten_sum, region, experiment_name,
                                            transforms.Normalize([0.5, 0.5, 0.5],
                                                                 [0.5, 0.5, 0.5])]) # why this normalizing?
     
-    test_transforms = transforms.Compose([transforms.Lambda(lambda img: macula_focus(img, skeleton, determine_image_side_view(img, eye_csv, checksum_dict), brighten_sum, region)),
+    test_transforms = transforms.Compose([transforms.Lambda
+                                      (lambda img: skeletonize_images(img, skeleton, image_size)),
                                           # transforms.Resize(image_size),
                                           transforms.ToTensor(),
                                           transforms.Normalize([0.5, 0.5, 0.5],
@@ -113,9 +129,7 @@ def train(data_dir, skeleton, brighten_sum, region, experiment_name,
     print()
     print(f'Data Directory: {data_dir}')
     print(f'Experiment Name: {experiment_name}')
-    print(f'Skeletonization: {skeleton}')
-    print(f'Region: {region}')
-    print(f'Brightening by: {brighten_sum}')
+    print(f'Skeletonize: {skeleton}')
     print(f'Number of Classes: {num_classes}')
     print(f'Number of black eyes: {len(labels[labels == 0])}')
     print(f'Number of white eyes: {len(labels[labels == 1])}')
@@ -178,9 +192,8 @@ def train(data_dir, skeleton, brighten_sum, region, experiment_name,
 
 if __name__ == '__main__':
     
-    
-    experiment_name = "given_dataset/#3(macula_focus)"
-    data_dir = "dataset_given" # all 4546 images
+    data_dir = os.path.join('dataset_given')
+    experiment_name = 'given_dataset/base_models'
     
     if not os.path.isdir(os.path.join('outputs', 'probabilities', experiment_name)):
         os.makedirs(os.path.join('outputs', 'probabilities', experiment_name))
@@ -188,14 +201,12 @@ if __name__ == '__main__':
         os.makedirs(os.path.join('outputs', 'checkpoints', experiment_name))
     if not os.path.isdir(os.path.join('outputs', 'histories', experiment_name)):
         os.makedirs(os.path.join('outputs', 'histories', experiment_name))
+
+    # original model
+   #  train(data_dir, experiment_name, skeleton=False)
     
-    # experiment 10 part 2
+    # skeletonized control
+    train(data_dir, experiment_name, skeleton=True)
     
-        # skeletonized
-    train(data_dir, True, 0, 'show_macula', experiment_name)
-    train(data_dir, True, 0, 'hide_macula', experiment_name)
-        # non-skeletonized
-    train(data_dir, False, 0, 'show_macula', experiment_name)
-    train(data_dir, False, 0, 'hide_macula', experiment_name)
-        
-    # will try brightening later
+    # training 6 skeleton & shadow (no ring) models for experiment #2
+    # train(data_dir, 45, [0,0] 'dark_center',skeleton=True, shadow = True, shadow_ring = False)
